@@ -1,0 +1,22 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/Anizium/icon.png",
+        "fileHash": "sha256-7b54da20feeb8e0b4b308b504c08c81c5ba3c9701d81a9fed4d098d7c09bdfd4",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/forzupsz/forzups-plugins",
+        "fileSize": 23652,
+        "status": 1,
+        "language": "tr",
+        "authors": [
+            "forzupsz"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Anizium",
+        "description": "Anizium CloudStream Eklentisi",
+        "url": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/builds/Anizium.cs3",
+        "name": "Anizium"
+    }
+]
