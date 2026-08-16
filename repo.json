@@ -1,0 +1,8 @@
+{
+  "name": "Forzups Plugins",
+  "description": "Anizium ve Türkçe CloudStream eklentileri",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/forzupsz/forzups-plugins/builds/plugins.json"
+  ]
+}
