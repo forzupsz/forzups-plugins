@@ -2,7 +2,6 @@ package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.ExtractorLinkBuilder
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
@@ -281,16 +280,16 @@ class AniziumProvider : MainAPI() {
                         val streamUrl = item.link ?: return@forEach
                         val qualityVal = item.quality ?: Qualities.Unknown.value
 
-                        val extractorLink = ExtractorLinkBuilder()
-                            .setSource(this.name)
-                            .setName("${this.name} - $groupName")
-                            .setUrl(streamUrl)
-                            .setReferer("https://anizium.co/")
-                            .setQuality(qualityVal)
-                            .setIsM3u8(streamUrl.contains(".m3u8"))
-                            .build()
-
-                        offsetCallback.invoke(extractorLink)
+                        offsetCallback.invoke(
+                            ExtractorLink(
+                                source = this.name,
+                                name = "${this.name} - $groupName",
+                                url = streamUrl,
+                                referer = "https://anizium.co/",
+                                quality = qualityVal,
+                                isM3u8 = streamUrl.contains(".m3u8")
+                            )
+                        )
                     }
                 }
                 true
