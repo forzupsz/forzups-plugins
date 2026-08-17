@@ -24,7 +24,6 @@ class OpenAniProvider : MainAPI() {
     private fun extractAnimeFromDoc(doc: Document): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         
-        // Sitedeki tüm anime kartı ve bağlantı elemanlarını tara
         val elements = doc.select("a[href*=/anime/], a[href*=/dizi/], div.anime-card, div.poster-card, article, div[class*=card]")
         
         elements.forEach { element ->
@@ -33,7 +32,6 @@ class OpenAniProvider : MainAPI() {
             
             if (href == "/anime" || href == "/animeler" || href.endsWith("/anime/")) return@forEach
 
-            // Başlık ayıklama
             val title = element.selectFirst("h1, h2, h3, h4, .title, .name, [class*=title]")?.text()?.trim()
                 ?: linkNode.attr("title").ifEmpty { null }
                 ?: element.selectFirst("img")?.attr("alt")?.trim()
@@ -41,7 +39,6 @@ class OpenAniProvider : MainAPI() {
 
             if (title.length < 2) return@forEach
 
-            // Görsel/Poster ayıklama (TMDB linkleri dahil)
             val imgNode = element.selectFirst("img")
             var poster = imgNode?.attr("src")?.ifEmpty { null }
                 ?: imgNode?.attr("data-src")?.ifEmpty { null }
