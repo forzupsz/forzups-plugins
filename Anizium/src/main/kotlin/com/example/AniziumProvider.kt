@@ -164,6 +164,7 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
+            // Series ID Tespiti
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
@@ -192,7 +193,12 @@ class AniziumProvider : MainAPI() {
                             val epList = season.get("episodes") ?: season.get("series")
                             
                             epList?.forEach { ep ->
-                                val epId = ep.get("id")?.asText() ?: ep.get("ID")?.asText() ?: return@forEach
+                                // Bölüm ID'sini tüm olası anahtarlardan tara
+                                val epId = ep.get("id")?.asText() 
+                                    ?: ep.get("ID")?.asText() 
+                                    ?: ep.get("episode_id")?.asText() 
+                                    ?: return@forEach
+
                                 val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                                 val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
@@ -206,7 +212,11 @@ class AniziumProvider : MainAPI() {
                     } else {
                         val directEpList = animeSeriesObj.get("episodes") ?: animeSeriesObj.get("series")
                         directEpList?.forEach { ep ->
-                            val epId = ep.get("id")?.asText() ?: ep.get("ID")?.asText() ?: return@forEach
+                            val epId = ep.get("id")?.asText() 
+                                ?: ep.get("ID")?.asText() 
+                                ?: ep.get("episode_id")?.asText() 
+                                ?: return@forEach
+
                             val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                             val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
@@ -240,12 +250,13 @@ class AniziumProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
+            // Sitenin gerçek kaynak isteği
             val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart"
             val resText = app.get(sourceApiUrl, headers = apiHeaders).text
             val rootNode = mapper.readTree(resText)
 
             var found = false
-            val contentNode = rootNode.get("content")
+            val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
             val groupsNode = contentNode?.get("groups")
 
             if (groupsNode != null && groupsNode.isArray) {
