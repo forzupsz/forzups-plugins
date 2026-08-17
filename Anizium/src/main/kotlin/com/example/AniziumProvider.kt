@@ -19,22 +19,25 @@ class AniziumProvider : MainAPI() {
             val response = app.get(catalogUrl)
             val document = response.document
 
-            document.select("a[href*=/anime/], .anime-card, article, div.poster").forEach { element ->
+            // Tüm linkleri ve kapsayıcıları geniş seçici ile yakalıyoruz
+            document.select("a, div[class*=anime], div[class*=poster], div[class*=card]").forEach { element ->
                 val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
                 val href = fixUrlNull(linkElement?.attr("href")) ?: return@forEach
                 
-                val title = element.selectFirst(".title, .name, h2, h3, h4")?.text()
+                // Başlık ayrıştırma
+                val title = element.selectFirst("h1, h2, h3, h4, .title, .name, [class*=title]")?.text()
                     ?: element.attr("title")
-                    ?: linkElement?.text()
-                    ?: ""
+                    ?: linkElement.text()
 
+                // Resim adresi ayrıştırma
                 val imgElement = element.selectFirst("img")
                 val posterUrl = fixUrlNull(
                     imgElement?.attr("data-src")
                         ?: imgElement?.attr("src")
+                        ?: imgElement?.attr("srcset")?.substringBefore(" ")
                 )
 
-                if (title.isNotBlank() && title.length > 2) {
+                if (title.isNotBlank() && title.length > 1 && !href.endsWith("/animes")) {
                     items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
                         this.posterUrl = posterUrl
                     })
@@ -60,7 +63,7 @@ class AniziumProvider : MainAPI() {
         )
 
         val episodes = ArrayList<Episode>()
-        document.select("a[href*=/episode/], a[href*=/bolum/]").forEach { ep ->
+        document.select("a[href*=/episode/], a[href*=/bolum/], a[href*=/watch/]").forEach { ep ->
             val epHref = fixUrlNull(ep.attr("href")) ?: return@forEach
             val epName = ep.text().trim().ifEmpty { "Bölüm" }
             episodes.add(newEpisode(epHref) {
