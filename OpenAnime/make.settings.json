@@ -1,0 +1,10 @@
+{
+  "name": "Anizium",
+  "author": "forzupsz",
+  "description": "Anizium CloudStream Eklentisi",
+  "language": "tr",
+  "tvTypes": [
+    "Anime"
+  ],
+  "iconUrl": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/Anizium/icon.png"
+}
