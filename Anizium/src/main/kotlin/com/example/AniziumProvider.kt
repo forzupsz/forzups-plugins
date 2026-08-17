@@ -3,6 +3,7 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.readValue
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -13,7 +14,6 @@ class AniziumProvider : MainAPI() {
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    // Sitenin doğrulama başlıkları
     private val apiHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -24,11 +24,6 @@ class AniziumProvider : MainAPI() {
         "site" to "main",
         "device" to "browser",
         "language" to "tr"
-    )
-
-    data class ApiResponse(
-        @JsonProperty("data") val data: List<AnimeItem>? = null,
-        @JsonProperty("animes") val animes: List<AnimeItem>? = null
     )
 
     data class AnimeItem(
@@ -45,10 +40,18 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         try {
             val jsonUrl = "$apiUrl/page/top?platform=favorite&page=1"
-            val response = app.get(jsonUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
-            val list = response?.data ?: response?.animes
+            val jsonText = app.get(jsonUrl, headers = apiHeaders).text
+            
+            val mapper = mapper
+            val parsedList = try {
+                val node = mapper.readTree(jsonText)
+                val arrayNode = if (node.has("data")) node.get("data") else if (node.has("animes")) node.get("animes") else node
+                mapper.readValue<List<AnimeItem>>(arrayNode.toString())
+            } catch (e: Exception) {
+                emptyList()
+            }
 
-            list?.forEach { anime ->
+            parsedList.forEach { anime ->
                 val animeTitle = anime.title ?: anime.name ?: return@forEach
                 val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
@@ -71,10 +74,18 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         try {
             val searchUrl = "$apiUrl/search?q=$query"
-            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
-            val list = response?.data ?: response?.animes
+            val jsonText = app.get(searchUrl, headers = apiHeaders).text
+            
+            val mapper = mapper
+            val parsedList = try {
+                val node = mapper.readTree(jsonText)
+                val arrayNode = if (node.has("data")) node.get("data") else if (node.has("animes")) node.get("animes") else node
+                mapper.readValue<List<AnimeItem>>(arrayNode.toString())
+            } catch (e: Exception) {
+                emptyList()
+            }
 
-            list?.forEach { anime ->
+            parsedList.forEach { anime ->
                 val animeTitle = anime.title ?: anime.name ?: return@forEach
                 val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
