@@ -62,43 +62,9 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("overview") val overview: String? = null
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val homePageList = ArrayList<HomePageList>()
-
-        try {
-            val response = app.get("$apiUrl/page/home", headers = apiHeaders).parsedSafe<HomeApiResponse>()
-
-            // 1. Vitrin / Öne Çıkanlar
-            val topItems = response?.settlementTop?.toSearchResponses() ?: emptyList()
-            if (topItems.isNotEmpty()) homePageList.add(HomePageList("Öne Çıkan Animeler", topItems))
-
-            // 2. Haftanın En Çok İzlenenleri
-            val middleItems = response?.settlementMiddle?.toSearchResponses() ?: emptyList()
-            if (middleItems.isNotEmpty()) homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middleItems))
-
-            // 3. Görselde Yakaladığımız 'special_list' İçindeki Tüm Özel Kategoriler (İsekai, Dublaj, vb.)
-            response?.specialList?.forEach { category ->
-                val categoryName = category.name ?: return@forEach
-                val animeList = category.data?.toSearchResponses() ?: emptyList()
-                if (animeList.isNotEmpty()) {
-                    homePageList.add(HomePageList(categoryName, animeList))
-                }
-            }
-
-            // 4. Alt Liste
-            val lowerItems = response?.settlementLower?.toSearchResponses() ?: emptyList()
-            if (lowerItems.isNotEmpty()) homePageList.add(HomePageList("Önerilen Animeler", lowerItems))
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        return newHomePageResponse(list = homePageList, hasNext = false)
-    }
-
-    private fun List<AnimeItem>.toSearchResponses(): List<SearchResponse> {
+    private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
-        this.forEach { anime ->
+        list?.forEach { anime ->
             val animeName = anime.name ?: anime.title ?: return@forEach
             val animeId = anime.id ?: return@forEach
             items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
@@ -108,19 +74,46 @@ class AniziumProvider : MainAPI() {
         return items
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val items = ArrayList<SearchResponse>()
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val homePageList = ArrayList<HomePageList>()
+
         try {
+            val response = app.get("$apiUrl/page/home", headers = apiHeaders).parsedSafe<HomeApiResponse>()
+
+            val topItems = parseAnimeList(response?.settlementTop)
+            if (topItems.isNotEmpty()) homePageList.add(HomePageList("Öne Çıkan Animeler", topItems))
+
+            val middleItems = parseAnimeList(response?.settlementMiddle)
+            if (middleItems.isNotEmpty()) homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middleItems))
+
+            response?.specialList?.forEach { category ->
+                val categoryName = category.name ?: return@forEach
+                val animeList = parseAnimeList(category.data)
+                if (animeList.isNotEmpty()) {
+                    homePageList.add(HomePageList(categoryName, animeList))
+                }
+            }
+
+            val lowerItems = parseAnimeList(response?.settlementLower)
+            if (lowerItems.isNotEmpty()) homePageList.add(HomePageList("Önerilen Animeler", lowerItems))
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return newHomePageResponse(list = homePageList, hasNext = false)
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        return try {
             val cleanQuery = query.trim().replace(" ", "+")
             val searchUrl = "$apiUrl/page/search?value=$cleanQuery&page=1"
             val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<SearchApiResponse>()
             val listData = response?.page?.data ?: response?.data
-
-            items.addAll(listData?.toSearchResponses() ?: emptyList())
+            parseAnimeList(listData)
         } catch (e: Exception) {
-            e.printStackTrace()
+            emptyList()
         }
-        return items
     }
 
     override suspend fun load(url: String): LoadResponse {
