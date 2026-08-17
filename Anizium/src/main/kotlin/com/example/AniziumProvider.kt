@@ -28,7 +28,7 @@ class AniziumProvider : MainAPI() {
         "User-Session" to "null"
     )
 
-    // --- JSON MODEL YAPILARI (Ana Sayfa ve Arama İçin) ---
+    // --- JSON MODEL YAPILARI ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class GenreItem(
@@ -134,10 +134,12 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (GARANTİ MANTIĞA GEÇİLDİ) ---
+    // --- 3. DETAY VE BÖLÜMLER (DOĞRU ENDPOINT VE BINDING) ---
     override suspend fun load(url: String): LoadResponse {
         val animeId = url
-        val detailUrl = "$apiUrl/anime/get?id=$animeId"
+        // Çalışan alternatif istek adresi:
+        val listDetailUrl = "$apiUrl/page/list?type=anime&id=$animeId&direct=true"
+        val fallbackDetailUrl = "$apiUrl/anime/get?id=$animeId"
         
         var title = "Anime"
         var poster: String? = null
@@ -147,9 +149,16 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            val jsonText = app.get(detailUrl, headers = apiHeaders).text
+            // Önce çalışan list URL'ini çağırıyoruz
+            var jsonText = ""
+            try {
+                jsonText = app.get(listDetailUrl, headers = apiHeaders).text
+            } catch (e: Exception) {
+                // Eğer hata alırsak fallback endpoint'i deniyoruz
+                jsonText = app.get(fallbackDetailUrl, headers = apiHeaders).text
+            }
+
             val node = mapper.readTree(jsonText)
-            
             val dataNode = if (node.has("data")) node.get("data") else node
 
             // 1. İsim
@@ -158,14 +167,14 @@ class AniziumProvider : MainAPI() {
                 ?: dataNode.get("title")?.asText() 
                 ?: "Anime"
 
-            // 2. Poster ve Banner (Afis / Kapak)
+            // 2. Poster ve Banner
             poster = fixUrlNull(dataNode.get("poster")?.asText() ?: dataNode.get("mobile_poster_link")?.asText())
-            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner")?.asText())
+            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner_link")?.asText() ?: dataNode.get("banner")?.asText())
 
-            // 3. Konu / Aciklama
+            // 3. Konu
             description = dataNode.get("overview")?.asText() ?: dataNode.get("overview_short")?.asText()
 
-            // 4. Turler (Genres)
+            // 4. Türler
             val genreNode = dataNode.get("genre")
             if (genreNode != null && genreNode.isArray) {
                 genreNode.forEach { g ->
@@ -174,7 +183,7 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // 5. Sezonlar ve Bolumler Parsing
+            // 5. Sezonlar ve Bölümler Parsing
             val seasonsNode = dataNode.get("seasons")
             if (seasonsNode != null && seasonsNode.isArray) {
                 seasonsNode.forEach { season ->
@@ -234,7 +243,6 @@ class AniziumProvider : MainAPI() {
     ): Boolean {
         return try {
             val videoUrl = if (data.startsWith("http")) data else "$apiUrl/episode/get?id=$data"
-
             val isM3u8 = videoUrl.contains(".m3u8")
 
             offsetCallback.invoke(
