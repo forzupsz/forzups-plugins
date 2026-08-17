@@ -22,15 +22,25 @@ class OpenAniProvider : MainAPI() {
         try {
             val doc = app.get(mainUrl, headers = defaultHeaders).document
 
-            val latestItems = doc.select("div.anime-card, div.poster-card, div.item").mapNotNull { element ->
-                val title = element.selectFirst("h3, h2, .title, .name")?.text() ?: return@mapNotNull null
-                val href = element.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val poster = element.selectFirst("img")?.attr("src") ?: element.selectFirst("img")?.attr("data-src")
+            val latestItems = doc.select("a[href*=/anime/], a[href*=/izle/], div.anime, div.card, .item, article").mapNotNull { element ->
+                val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
+                val href = linkElement?.attr("href") ?: return@mapNotNull null
+                if (href == "/anime" || href == "/animeler") return@mapNotNull null
+
+                val title = element.selectFirst("h1, h2, h3, h4, .title, .name, img")?.let {
+                    if (it.tagName() == "img") it.attr("alt") else it.text()
+                }?.trim() ?: return@mapNotNull null
+
+                if (title.isEmpty()) return@mapNotNull null
+
+                val poster = element.selectFirst("img")?.let { img ->
+                    img.attr("src").ifEmpty { img.attr("data-src") }.ifEmpty { img.attr("srcset") }
+                }
 
                 newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixUrlNull(poster)
                 }
-            }
+            }.distinctBy { it.url }
 
             if (latestItems.isNotEmpty()) {
                 homePageList.add(HomePageList("Son Eklenenler", latestItems))
@@ -47,15 +57,20 @@ class OpenAniProvider : MainAPI() {
             val searchUrl = "$mainUrl/ara?q=${query.trim().replace(" ", "+")}"
             val doc = app.get(searchUrl, headers = defaultHeaders).document
 
-            doc.select("div.anime-card, div.poster-card, div.search-result").mapNotNull { element ->
-                val title = element.selectFirst("h3, h2, .title, .name")?.text() ?: return@mapNotNull null
-                val href = element.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val poster = element.selectFirst("img")?.attr("src") ?: element.selectFirst("img")?.attr("data-src")
+            doc.select("a[href*=/anime/], div.card, .search-result").mapNotNull { element ->
+                val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
+                val href = linkElement?.attr("href") ?: return@mapNotNull null
+
+                val title = element.selectFirst("h1, h2, h3, .title, img")?.let {
+                    if (it.tagName() == "img") it.attr("alt") else it.text()
+                }?.trim() ?: return@mapNotNull null
+
+                val poster = element.selectFirst("img")?.attr("src")
 
                 newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixUrlNull(poster)
                 }
-            }
+            }.distinctBy { it.url }
         } catch (e: Exception) {
             emptyList()
         }
@@ -64,15 +79,14 @@ class OpenAniProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val doc = app.get(url, headers = defaultHeaders).document
 
-        val title = doc.selectFirst("h1.title, h1, .anime-title")?.text()?.trim() ?: "Anime"
-        val poster = doc.selectFirst("div.poster img, img.poster")?.attr("src") 
-            ?: doc.selectFirst("div.poster img, img.poster")?.attr("data-src")
-        val description = doc.selectFirst("div.description, div.overview, p.synopsis")?.text()?.trim()
-        val genres = doc.select("div.genres a, .genre-item").map { it.text().trim() }
+        val title = doc.selectFirst("h1, .title, .anime-title")?.text()?.trim() ?: "Anime"
+        val poster = doc.selectFirst("img[src*=/poster/], img[src*=/cover/], .poster img, img")?.attr("src")
+        val description = doc.selectFirst(".description, .overview, .synopsis, p")?.text()?.trim()
+        val genres = doc.select("a[href*=/tur/], a[href*=/genre/], .genre").map { it.text().trim() }
 
         val episodesList = ArrayList<Episode>()
+        val epElements = doc.select("a[href*=/bolum], a[href*=-bolum-], .episode-item, .episodes a")
 
-        val epElements = doc.select("a.episode-item, div.episode-list a, ul.episodes-list a")
         if (epElements.isNotEmpty()) {
             epElements.forEachIndexed { index, ep ->
                 val epHref = ep.attr("href")
@@ -108,37 +122,16 @@ class OpenAniProvider : MainAPI() {
             val doc = app.get(data, headers = defaultHeaders).document
             var found = false
 
-            val iframes = doc.select("iframe")
-            iframes.forEach { iframe ->
+            doc.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotEmpty()) {
-                    val embedUrl = fixUrl(src)
-                    loadExtractor(embedUrl, subtitleCallback, offsetCallback)
-                    found = true
-                }
-            }
-
-            val videoTags = doc.select("video source")
-            videoTags.forEach { video ->
-                val videoUrl = video.attr("src")
-                if (videoUrl.isNotEmpty()) {
-                    offsetCallback.invoke(
-                        newExtractorLink(
-                            name = this.name,
-                            source = this.name,
-                            url = fixUrl(videoUrl),
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$mainUrl/"
-                        }
-                    )
+                    loadExtractor(fixUrl(src), subtitleCallback, offsetCallback)
                     found = true
                 }
             }
 
             found
         } catch (e: Exception) {
-            e.printStackTrace()
             false
         }
     }
