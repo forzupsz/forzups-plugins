@@ -2,49 +2,93 @@ package com.forzups
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Document
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 class OpenAniProvider : MainAPI() {
     override var mainUrl = "https://openani.me"
+    private val apiUrl = "https://canvas.openani.me"
+    
     override var name = "OpenAni"
     override val hasMainPage = true
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    private val defaultHeaders = mapOf(
+    private val apiHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer" to "$mainUrl/",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        "Origin" to mainUrl,
+        "Accept" to "application/json, text/plain, */*"
     )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AnimeItem(
+        @JsonProperty("id") val id: String? = null,
+        @JsonProperty("slug") val slug: String? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("poster_path") val posterPath: String? = null,
+        @JsonProperty("image") val image: String? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class EpisodeItem(
+        @JsonProperty("id") val id: String? = null,
+        @JsonProperty("number") val number: Int? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AnimeDetail(
+        @JsonProperty("id") val id: String? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("overview") val overview: String? = null,
+        @JsonProperty("description") val description: String? = null,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("poster_path") val posterPath: String? = null,
+        @JsonProperty("episodes") val episodes: List<EpisodeItem>? = null,
+        @JsonProperty("genres") val genres: List<String>? = null
+    )
+
+    private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
+        val items = ArrayList<SearchResponse>()
+        list?.forEach { anime ->
+            val animeTitle = anime.title ?: anime.name ?: return@forEach
+            val animeSlug = anime.slug ?: anime.id ?: return@forEach
+            val posterUrl = anime.poster ?: anime.image ?: anime.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+
+            items.add(newAnimeSearchResponse(animeTitle, "$mainUrl/anime/$animeSlug", TvType.Anime) {
+                this.posterUrl = fixUrlNull(posterUrl)
+            })
+        }
+        return items
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val homePageList = ArrayList<HomePageList>()
+
         try {
-            val doc = app.get(mainUrl, headers = defaultHeaders).document
-
-            val latestItems = doc.select("a[href*=/anime/], a[href*=/izle/], div.anime, div.card, .item, article").mapNotNull { element ->
-                val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
-                val href = linkElement?.attr("href") ?: return@mapNotNull null
-                if (href == "/anime" || href == "/animeler") return@mapNotNull null
-
-                val title = element.selectFirst("h1, h2, h3, h4, .title, .name, img")?.let {
-                    if (it.tagName() == "img") it.attr("alt") else it.text()
-                }?.trim() ?: return@mapNotNull null
-
-                if (title.isEmpty()) return@mapNotNull null
-
-                val poster = element.selectFirst("img")?.let { img ->
-                    img.attr("src").ifEmpty { img.attr("data-src") }.ifEmpty { img.attr("srcset") }
-                }
-
-                newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
-                    this.posterUrl = fixUrlNull(poster)
-                }
-            }.distinctBy { it.url }
-
+            val latestRes = app.get("$apiUrl/latest?limit=24", headers = apiHeaders).parsedSafe<List<AnimeItem>>()
+            val latestItems = parseAnimeList(latestRes)
             if (latestItems.isNotEmpty()) {
                 homePageList.add(HomePageList("Son Eklenenler", latestItems))
             }
+
+            val popularRes = app.get("$apiUrl/populars?limit=24", headers = apiHeaders).parsedSafe<List<AnimeItem>>()
+            val popularItems = parseAnimeList(popularRes)
+            if (popularItems.isNotEmpty()) {
+                homePageList.add(HomePageList("Popüler Animeler", popularItems))
+            }
+
+            val releasesRes = app.get("$apiUrl/4k-releases", headers = apiHeaders).parsedSafe<List<AnimeItem>>()
+            val releasesItems = parseAnimeList(releasesRes)
+            if (releasesItems.isNotEmpty()) {
+                homePageList.add(HomePageList("4K İçerikler", releasesItems))
+            }
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -54,60 +98,39 @@ class OpenAniProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
-            val searchUrl = "$mainUrl/ara?q=${query.trim().replace(" ", "+")}"
-            val doc = app.get(searchUrl, headers = defaultHeaders).document
-
-            doc.select("a[href*=/anime/], div.card, .search-result").mapNotNull { element ->
-                val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
-                val href = linkElement?.attr("href") ?: return@mapNotNull null
-
-                val title = element.selectFirst("h1, h2, h3, .title, img")?.let {
-                    if (it.tagName() == "img") it.attr("alt") else it.text()
-                }?.trim() ?: return@mapNotNull null
-
-                val poster = element.selectFirst("img")?.attr("src")
-
-                newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
-                    this.posterUrl = fixUrlNull(poster)
-                }
-            }.distinctBy { it.url }
+            val searchUrl = "$apiUrl/search?q=${query.trim().replace(" ", "+")}"
+            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<List<AnimeItem>>()
+            parseAnimeList(response)
         } catch (e: Exception) {
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = defaultHeaders).document
+        val slug = url.substringAfterLast("/").trim()
+        val detailUrl = "$apiUrl/anime/$slug"
+        val docRes = app.get(detailUrl, headers = apiHeaders).parsedSafe<AnimeDetail>()
 
-        val title = doc.selectFirst("h1, .title, .anime-title")?.text()?.trim() ?: "Anime"
-        val poster = doc.selectFirst("img[src*=/poster/], img[src*=/cover/], .poster img, img")?.attr("src")
-        val description = doc.selectFirst(".description, .overview, .synopsis, p")?.text()?.trim()
-        val genres = doc.select("a[href*=/tur/], a[href*=/genre/], .genre").map { it.text().trim() }
+        val title = docRes?.title ?: docRes?.name ?: "Anime"
+        val poster = docRes?.poster ?: docRes?.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+        val description = docRes?.overview ?: docRes?.description
 
         val episodesList = ArrayList<Episode>()
-        val epElements = doc.select("a[href*=/bolum], a[href*=-bolum-], .episode-item, .episodes a")
+        docRes?.episodes?.forEachIndexed { index, ep ->
+            val epNum = ep.number ?: (index + 1)
+            val epName = ep.title ?: ep.name ?: "$epNum. Bölüm"
+            val epId = ep.id ?: "$slug-$epNum"
 
-        if (epElements.isNotEmpty()) {
-            epElements.forEachIndexed { index, ep ->
-                val epHref = ep.attr("href")
-                val epTitle = ep.text().trim().ifEmpty { "${index + 1}. Bölüm" }
-
-                episodesList.add(newEpisode(fixUrl(epHref)) {
-                    this.name = epTitle
-                    this.episode = index + 1
-                })
-            }
-        } else {
-            episodesList.add(newEpisode(url) {
-                this.name = "1. Bölüm"
-                this.episode = 1
+            episodesList.add(newEpisode(epId) {
+                this.name = epName
+                this.episode = epNum
             })
         }
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = fixUrlNull(poster)
             this.plot = description
-            this.tags = genres
+            this.tags = docRes?.genres
             addEpisodes(DubStatus.Subbed, episodesList)
         }
     }
@@ -119,17 +142,20 @@ class OpenAniProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val doc = app.get(data, headers = defaultHeaders).document
+            val sourceUrl = "$apiUrl/source/$data"
+            val resText = app.get(sourceUrl, headers = apiHeaders).text
             var found = false
 
-            doc.select("iframe").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotEmpty()) {
-                    loadExtractor(fixUrl(src), subtitleCallback, offsetCallback)
+            if (resText.contains("http")) {
+                val mapper = com.fasterxml.jackson.databind.ObjectMapper()
+                val rootNode = mapper.readTree(resText)
+                
+                val embedUrl = rootNode.get("url")?.asText() ?: rootNode.get("file")?.asText() ?: ""
+                if (embedUrl.isNotEmpty()) {
+                    loadExtractor(fixUrl(embedUrl), subtitleCallback, offsetCallback)
                     found = true
                 }
             }
-
             found
         } catch (e: Exception) {
             false
