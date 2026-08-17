@@ -43,7 +43,7 @@ class AniziumProvider : MainAPI() {
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SearchApiResponse(
+    data class PageApiResponse(
         @JsonProperty("page") val page: PageData? = null,
         @JsonProperty("data") val data: List<AnimeItem>? = null
     )
@@ -78,15 +78,24 @@ class AniziumProvider : MainAPI() {
         val homePageList = ArrayList<HomePageList>()
 
         try {
-            val response = app.get("$apiUrl/page/home", headers = apiHeaders).parsedSafe<HomeApiResponse>()
+            // 1. Son Eklenen Bölümler (Görseldeki last-added-episodes adresi)
+            val lastAddedRes = app.get("$apiUrl/page/last-added-episodes?page=1", headers = apiHeaders).parsedSafe<PageApiResponse>()
+            val lastAddedItems = parseAnimeList(lastAddedRes?.page?.data ?: lastAddedRes?.data)
+            if (lastAddedItems.isNotEmpty()) {
+                homePageList.add(HomePageList("Son Eklenen Bölümler", lastAddedItems))
+            }
 
-            val topItems = parseAnimeList(response?.settlementTop)
+            // 2. Ana Sayfa Verileri (/page/home)
+            val homeRes = app.get("$apiUrl/page/home", headers = apiHeaders).parsedSafe<HomeApiResponse>()
+
+            val topItems = parseAnimeList(homeRes?.settlementTop)
             if (topItems.isNotEmpty()) homePageList.add(HomePageList("Öne Çıkan Animeler", topItems))
 
-            val middleItems = parseAnimeList(response?.settlementMiddle)
+            val middleItems = parseAnimeList(homeRes?.settlementMiddle)
             if (middleItems.isNotEmpty()) homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middleItems))
 
-            response?.specialList?.forEach { category ->
+            // 3. Özel Kategoriler (İsekai, Dublaj, vb.)
+            homeRes?.specialList?.forEach { category ->
                 val categoryName = category.name ?: return@forEach
                 val animeList = parseAnimeList(category.data)
                 if (animeList.isNotEmpty()) {
@@ -94,7 +103,7 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            val lowerItems = parseAnimeList(response?.settlementLower)
+            val lowerItems = parseAnimeList(homeRes?.settlementLower)
             if (lowerItems.isNotEmpty()) homePageList.add(HomePageList("Önerilen Animeler", lowerItems))
 
         } catch (e: Exception) {
@@ -108,7 +117,7 @@ class AniziumProvider : MainAPI() {
         return try {
             val cleanQuery = query.trim().replace(" ", "+")
             val searchUrl = "$apiUrl/page/search?value=$cleanQuery&page=1"
-            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<SearchApiResponse>()
+            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<PageApiResponse>()
             val listData = response?.page?.data ?: response?.data
             parseAnimeList(listData)
         } catch (e: Exception) {
