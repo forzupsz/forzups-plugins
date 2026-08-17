@@ -1,5 +1,5 @@
 {
-  "name": "OpenAnime",
+  "name": "OpenAni",
   "plugin": "com.forzups.OpenAniPlugin",
   "author": "forzupsz",
   "description": "OpenAnime CloudStream Eklentisi",
@@ -8,5 +8,5 @@
   "tvTypes": [
     "Anime"
   ],
-  "iconUrl": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/main/OpenAnime/icon.png"
+  "icon": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/main/OpenAnime/icon.png"
 }
