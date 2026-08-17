@@ -1,11 +1,11 @@
-package com.example
+package com.forzups
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.databind.JsonNode
 import java.net.URLEncoder
 
-class AniziumProvider : MainAPI() {
+class Anizium : MainAPI() {
 
     override var mainUrl = "https://anizium.co"
     private val apiUrl = "https://api.anizium.co"
