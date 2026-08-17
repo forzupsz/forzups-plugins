@@ -17,7 +17,6 @@ class Anizium : MainAPI() {
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    // Header yapıları derleme hatası almayacak şekilde güncellendi
     private val apiHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
@@ -325,14 +324,21 @@ class Anizium : MainAPI() {
         var found = false
 
         try {
-            val response = app.get(data, headers = apiHeaders).text
+            // URL içindeki id parametresi doğrulaması
+            val targetUrl = if (data.contains("http://") || data.contains("https://")) {
+                data
+            } else {
+                "$apiUrl/anime/source?id=${URLEncoder.encode(data, "UTF-8")}"
+            }
+
+            val response = app.get(targetUrl, headers = apiHeaders).text
             val root = mapper.readTree(response)
             val content = unwrap(root) ?: root
 
-            // Subtitles
+            // Subtitles (Altyazılar)
             val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
             subtitles?.forEach { subtitle ->
-                val linkUrl = text(subtitle, "link", "url") ?: return@forEach
+                val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
                 val language = text(subtitle, "name", "language", "label", "lang", "group") ?: "Türkçe"
 
                 subtitleCallback.invoke(
@@ -344,65 +350,25 @@ class Anizium : MainAPI() {
             }
 
             // Video Groups
-            val groups = array(content, "groups") ?: array(root, "groups")
+            val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
             groups?.forEach { group ->
-                val groupName = text(group, "name", "title", "group", "platform") ?: "Sunucu"
-                val items = array(group, "items")
+                val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
+                val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
 
-                items?.forEach { item ->
-                    val rawLink = text(item, "link", "url", "sourceUrl", "source_url") ?: return@forEach
-                    val quality = int(item, "quality") ?: Qualities.Unknown.value
-                    val finalUrl = fixUrl(rawLink)
+                if (items != null) {
+                    items.forEach { item ->
+                        val rawLink = text(item, "link", "url", "sourceUrl", "source_url", "file", "src") ?: return@forEach
+                        val quality = int(item, "quality", "res") ?: Qualities.Unknown.value
+                        val finalUrl = fixUrl(rawLink)
 
-                    val linkType = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
-                        ExtractorLinkType.M3U8
-                    } else {
-                        ExtractorLinkType.VIDEO
-                    }
-
-                    offsetCallback.invoke(
-                        newExtractorLink(
-                            name = groupName,
-                            source = this.name,
-                            url = finalUrl,
-                            type = linkType
-                        ) {
-                            referer = "$siteUrl/"
-                            this.quality = quality
+                        val linkType = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                            ExtractorLinkType.M3U8
+                        } else {
+                            ExtractorLinkType.VIDEO
                         }
-                    )
-                    found = true
-                }
-            }
 
-            if (!found) {
-                val directSource = text(content, "sourceUrl", "source_url", "link", "url")
-                if (!directSource.isNullOrBlank()) {
-                    val finalUrl = fixUrl(directSource)
-                    val linkType = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
-                        ExtractorLinkType.M3U8
-                    } else {
-                        ExtractorLinkType.VIDEO
-                    }
-
-                    offsetCallback.invoke(
-                        newExtractorLink(
-                            name = "Anizium",
-                            source = this.name,
-                            url = finalUrl,
-                            type = linkType
-                        ) {
-                            referer = "$siteUrl/"
-                            quality = Qualities.Unknown.value
-                        }
-                    )
-                    found = true
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        return found
-    }
-}
+                        offsetCallback.invoke(
+                            newExtractorLink(
+                                name = groupName,
+                                source = this.name,
+                                url = finalUrl,
