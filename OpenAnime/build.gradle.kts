@@ -8,11 +8,11 @@ version = 1
 cloudstream {
     description = "OpenAnime CloudStream Eklentisi"
     authors = listOf("forzupsz")
-    status = 1
+    status = 3
     tvTypes = listOf("Anime")
     requiresResources = false
     language = "tr"
-    iconUrl = "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/OpenAnime/icon.png"
+    iconUrl = "https://raw.githubusercontent.com/forzupsz/forzups-plugins/main/OpenAnime/icon.png"
 }
 
 android {
