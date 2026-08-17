@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import java.net.URLEncoder
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -73,8 +72,7 @@ class AniziumProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            val encodedQuery = URLEncoder.encode(query.lowercase().trim(), "UTF-8")
-            val searchUrl = "$apiUrl/search?value=$encodedQuery&page=1"
+            val searchUrl = "$apiUrl/search?value=$query&page=1"
             val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
 
             response?.page?.data?.forEach { anime ->
@@ -94,7 +92,6 @@ class AniziumProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val animeId = url
-        // Kesinleştirdiğimiz gerçek detay API adresi
         val detailUrl = "$apiUrl/anime/get?id=$animeId"
         
         var title = "Anime"
@@ -113,27 +110,27 @@ class AniziumProvider : MainAPI() {
             poster = fixUrlNull(dataNode.get("poster")?.asText())
             description = dataNode.get("overview")?.asText()
 
-            // Sezon veya doğrudan bölüm listesini tara
-            val seasonsNode = dataNode.get("seasons")
-            if (seasonsNode != null && seasonsNode.isArray) {
-                seasonsNode.forEach { season ->
-                    val episodesNode = season.get("episodes")
-                    episodesNode?.forEach { ep ->
+            // Konsol çıktısında yakaladığımız gerçek 'series' anahtarı
+            val seriesNode = dataNode.get("series")
+            if (seriesNode != null && seriesNode.isArray) {
+                seriesNode.forEach { ep ->
+                    val epId = ep.get("ID")?.asText() ?: return@forEach
+                    val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                    episodes.add(newEpisode(epId) {
+                        this.name = epName
+                    })
+                }
+            } else {
+                val seasonsNode = dataNode.get("seasons")
+                seasonsNode?.forEach { season ->
+                    val epList = season.get("episodes") ?: season.get("series")
+                    epList?.forEach { ep ->
                         val epId = ep.get("ID")?.asText() ?: return@forEach
                         val epName = ep.get("name")?.asText() ?: "Bölüm"
                         episodes.add(newEpisode(epId) {
                             this.name = epName
                         })
                     }
-                }
-            } else {
-                val episodesNode = dataNode.get("episodes")
-                episodesNode?.forEach { ep ->
-                    val epId = ep.get("ID")?.asText() ?: return@forEach
-                    val epName = ep.get("name")?.asText() ?: "Bölüm"
-                    episodes.add(newEpisode(epId) {
-                        this.name = epName
-                    })
                 }
             }
         } catch (e: Exception) {
