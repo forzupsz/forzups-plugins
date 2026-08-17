@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.JsonNode
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -78,6 +79,57 @@ class AniziumProvider : MainAPI() {
             })
         }
         return items
+    }
+
+    private fun parseEpisodesFromNode(
+        containerNode: JsonNode?,
+        targetSeriesId: String,
+        episodesList: ArrayList<Episode>
+    ) {
+        if (containerNode == null) return
+
+        val seasonsArray = when {
+            containerNode.has("seasons") && containerNode.get("seasons").isArray -> containerNode.get("seasons")
+            containerNode.isArray -> containerNode
+            else -> null
+        }
+
+        if (seasonsArray != null) {
+            seasonsArray.forEach { seasonObj ->
+                val seasonNumber = seasonObj.get("number")?.asInt() 
+                    ?: seasonObj.get("season_number")?.asInt() 
+                    ?: 1
+                
+                val epList = seasonObj.get("episodes") ?: seasonObj.get("series") ?: seasonObj.get("data")
+                epList?.forEach { ep ->
+                    val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                    val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt() ?: 1
+
+                    // loadLinks fonksiyonunun kaynak çağrısı için paketlenen string: ID|SEASON|EPISODE
+                    val linkData = "$targetSeriesId|$seasonNumber|$epNum"
+                    episodesList.add(newEpisode(linkData) {
+                        this.name = epName
+                        this.season = seasonNumber
+                        this.episode = epNum
+                    })
+                }
+            }
+        } else {
+            val directEpList = containerNode.get("episodes") ?: containerNode.get("series") ?: containerNode.get("data")
+            if (directEpList != null && directEpList.isArray) {
+                directEpList.forEach { ep ->
+                    val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                    val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt() ?: 1
+
+                    val linkData = "$targetSeriesId|1|$epNum"
+                    episodesList.add(newEpisode(linkData) {
+                        this.name = epName
+                        this.season = 1
+                        this.episode = epNum
+                    })
+                }
+            }
+        }
     }
 
     // --- 1. ANA SAYFA ---
@@ -167,62 +219,35 @@ class AniziumProvider : MainAPI() {
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
+                ?: dataNode.get("ID")?.asText()
+                ?: dataNode.get("id")?.asText()
                 ?: cleanId
 
-            val seriesResText = try {
-                app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
-            } catch (e: Exception) {
-                mainResText
-            }
+            // 1. Aşama: Ana künye yanıtının içinde bölüm verisi var mı bak
+            parseEpisodesFromNode(dataNode, targetSeriesId, episodesList)
 
-            val seriesNode = mapper.readTree(seriesResText)
-            
-            val seriesDataArray = when {
-                seriesNode.has("data") && seriesNode.get("data").isArray -> seriesNode.get("data")
-                seriesNode.isArray -> seriesNode
-                else -> null
-            }
+            // 2. Aşama: Eğer bölüm çıkmadıysa /anime/series endpoint'ine istek at
+            if (episodesList.isEmpty()) {
+                val seriesResText = try {
+                    app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
+                } catch (e: Exception) {
+                    ""
+                }
 
-            if (seriesDataArray != null && seriesDataArray.isArray) {
-                seriesDataArray.forEach { animeSeriesObj ->
-                    val seasonsNode = animeSeriesObj.get("seasons")
-                    if (seasonsNode != null && seasonsNode.isArray) {
-                        seasonsNode.forEach { season ->
-                            val seasonNumber = season.get("number")?.asInt() ?: season.get("season_number")?.asInt() ?: 1
-                            val epList = season.get("episodes") ?: season.get("series")
-                            
-                            epList?.forEach { ep ->
-                                val epId = ep.get("id")?.asText() 
-                                    ?: ep.get("ID")?.asText() 
-                                    ?: ep.get("episode_id")?.asText() 
-                                    ?: return@forEach
+                if (seriesResText.isNotEmpty()) {
+                    val seriesNode = mapper.readTree(seriesResText)
+                    val seriesDataArray = when {
+                        seriesNode.has("data") -> seriesNode.get("data")
+                        seriesNode.isArray -> seriesNode
+                        else -> seriesNode
+                    }
 
-                                val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                                val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
-
-                                episodesList.add(newEpisode(epId) {
-                                    this.name = epName
-                                    this.season = seasonNumber
-                                    this.episode = epNum
-                                })
-                            }
+                    if (seriesDataArray.isArray) {
+                        seriesDataArray.forEach { animeSeriesObj ->
+                            parseEpisodesFromNode(animeSeriesObj, targetSeriesId, episodesList)
                         }
                     } else {
-                        val directEpList = animeSeriesObj.get("episodes") ?: animeSeriesObj.get("series")
-                        directEpList?.forEach { ep ->
-                            val epId = ep.get("id")?.asText() 
-                                ?: ep.get("ID")?.asText() 
-                                ?: ep.get("episode_id")?.asText() 
-                                ?: return@forEach
-
-                            val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                            val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
-
-                            episodesList.add(newEpisode(epId) {
-                                this.name = epName
-                                this.episode = epNum
-                            })
-                        }
+                        parseEpisodesFromNode(seriesDataArray, targetSeriesId, episodesList)
                     }
                 }
             }
@@ -248,7 +273,13 @@ class AniziumProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart"
+            val parts = data.split("|")
+            val animeId = parts.getOrNull(0) ?: data
+            val seasonNum = parts.getOrNull(1) ?: "1"
+            val episodeNum = parts.getOrNull(2) ?: "1"
+
+            val sourceApiUrl = "$apiUrl/source?id=$animeId&site=main&plan=standart&season=$seasonNum&episode=$episodeNum"
+            
             val resText = app.get(sourceApiUrl, headers = apiHeaders).text
             val rootNode = mapper.readTree(resText)
 
