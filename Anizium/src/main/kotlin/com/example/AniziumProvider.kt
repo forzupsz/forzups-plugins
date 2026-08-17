@@ -19,17 +19,15 @@ class AniziumProvider : MainAPI() {
             val response = app.get(catalogUrl)
             val document = response.document
 
-            // Tüm linkleri ve kapsayıcıları geniş seçici ile yakalıyoruz
             document.select("a, div[class*=anime], div[class*=poster], div[class*=card]").forEach { element ->
                 val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
                 val href = fixUrlNull(linkElement?.attr("href")) ?: return@forEach
                 
-                // Başlık ayrıştırma
                 val title = element.selectFirst("h1, h2, h3, h4, .title, .name, [class*=title]")?.text()
                     ?: element.attr("title")
-                    ?: linkElement.text()
+                    ?: linkElement?.text()
+                    ?: ""
 
-                // Resim adresi ayrıştırma
                 val imgElement = element.selectFirst("img")
                 val posterUrl = fixUrlNull(
                     imgElement?.attr("data-src")
