@@ -105,7 +105,6 @@ class AniziumProvider : MainAPI() {
                     val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                     val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt() ?: 1
 
-                    // loadLinks fonksiyonunun kaynak çağrısı için paketlenen string: ID|SEASON|EPISODE
                     val linkData = "$targetSeriesId|$seasonNumber|$epNum"
                     episodesList.add(newEpisode(linkData) {
                         this.name = epName
@@ -223,10 +222,10 @@ class AniziumProvider : MainAPI() {
                 ?: dataNode.get("id")?.asText()
                 ?: cleanId
 
-            // 1. Aşama: Ana künye yanıtının içinde bölüm verisi var mı bak
+            // 1. AŞAMA: Ana API yanıtında bölümler var mı kontrol et
             parseEpisodesFromNode(dataNode, targetSeriesId, episodesList)
 
-            // 2. Aşama: Eğer bölüm çıkmadıysa /anime/series endpoint'ine istek at
+            // 2. AŞAMA: Bölümler henüz bulunamadıysa /series API'sinden çek
             if (episodesList.isEmpty()) {
                 val seriesResText = try {
                     app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
@@ -280,41 +279,71 @@ class AniziumProvider : MainAPI() {
 
             val sourceApiUrl = "$apiUrl/source?id=$animeId&site=main&plan=standart&season=$seasonNum&episode=$episodeNum"
             
-            val resText = app.get(sourceApiUrl, headers = apiHeaders).text
-            val rootNode = mapper.readTree(resText)
-
             var found = false
-            val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
-            val groupsNode = contentNode?.get("groups")
 
-            if (groupsNode != null && groupsNode.isArray) {
-                groupsNode.forEach { group ->
-                    val groupName = group.get("name")?.asText() ?: "Video"
-                    val itemsNode = group.get("items")
+            try {
+                val resText = app.get(sourceApiUrl, headers = apiHeaders).text
+                val rootNode = mapper.readTree(resText)
 
-                    if (itemsNode != null && itemsNode.isArray) {
-                        itemsNode.forEach { item ->
-                            val rawLink = item.get("link")?.asText() ?: return@forEach
-                            val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
+                val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
+                val groupsNode = contentNode?.get("groups")
 
-                            val streamUrl = fixUrl(rawLink)
+                if (groupsNode != null && groupsNode.isArray) {
+                    groupsNode.forEach { group ->
+                        val groupName = group.get("name")?.asText() ?: "Video"
+                        val itemsNode = group.get("items")
 
-                            offsetCallback.invoke(
-                                newExtractorLink(
-                                    name = "${this.name} - $groupName",
-                                    source = this.name,
-                                    url = streamUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "https://anizium.co/"
-                                    this.quality = qualityVal
-                                }
-                            )
-                            found = true
+                        if (itemsNode != null && itemsNode.isArray) {
+                            itemsNode.forEach { item ->
+                                val rawLink = item.get("link")?.asText() ?: return@forEach
+                                val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
+
+                                val streamUrl = fixUrl(rawLink)
+
+                                offsetCallback.invoke(
+                                    newExtractorLink(
+                                        name = "${this.name} - $groupName",
+                                        source = this.name,
+                                        url = streamUrl,
+                                        type = ExtractorLinkType.VIDEO
+                                    ) {
+                                        this.referer = "https://anizium.co/"
+                                        this.quality = qualityVal
+                                    }
+                                )
+                                found = true
+                            }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+
+            // Eğer API yanıtı boş gelirse, sunduğun CDN yapısına direkt istek at (Yedek Sistem)
+            if (!found) {
+                val qualities = mapOf(
+                    Qualities.P1080.value to "https://f.aniziumserver.sbs/$animeId/$seasonNum/$episodeNum/1080p.original.mp4",
+                    Qualities.P720.value to "https://f.aniziumserver.site/$animeId/$seasonNum/$episodeNum/720p.original.mp4",
+                    Qualities.P480.value to "https://f.aniziumserver.site/$animeId/$seasonNum/$episodeNum/480p.original.mp4"
+                )
+
+                qualities.forEach { (qValue, directUrl) ->
+                    offsetCallback.invoke(
+                        newExtractorLink(
+                            name = "${this.name} - Direct Server",
+                            source = this.name,
+                            url = directUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "https://anizium.co/"
+                            this.quality = qValue
+                        }
+                    )
+                }
+                found = true
+            }
+
             found
         } catch (e: Exception) {
             e.printStackTrace()
