@@ -281,14 +281,15 @@ class AniziumProvider : MainAPI() {
                         val qualityVal = item.quality ?: Qualities.Unknown.value
 
                         offsetCallback.invoke(
-                            ExtractorLink(
-                                source = this.name,
+                            newExtractorLink(
                                 name = "${this.name} - $groupName",
+                                source = this.name,
                                 url = streamUrl,
-                                referer = "https://anizium.co/",
-                                quality = qualityVal,
-                                isM3u8 = streamUrl.contains(".m3u8")
-                            )
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "https://anizium.co/"
+                                this.quality = qualityVal
+                            }
                         )
                     }
                 }
