@@ -31,14 +31,10 @@ class AniziumProvider : MainAPI() {
     // --- JSON MODEL YAPILARI ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class GenreItem(
-        @JsonProperty("ID") val id: String? = null,
-        @JsonProperty("name") val name: String? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     data class AnimeItem(
         @JsonProperty("ID") val id: String? = null,
+        @JsonProperty("series_id") val seriesId: String? = null,
+        @JsonProperty("slug") val slug: String? = null,
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("name_tr") val nameTr: String? = null,
         @JsonProperty("title") val title: String? = null,
@@ -76,7 +72,7 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         list?.forEach { anime ->
             val animeName = anime.nameTr ?: anime.name ?: anime.title ?: return@forEach
-            val animeId = anime.id ?: return@forEach
+            val animeId = anime.id ?: anime.slug ?: return@forEach
             items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
                 this.posterUrl = fixUrlNull(anime.poster)
             })
@@ -134,13 +130,13 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (DOĞRU ENDPOINT VE BINDING) ---
+    // --- 3. DETAY VE BÖLÜMLER (BİRLEŞTİRİLMİŞ ÇİFT ENDPOINT MANTIĞI) ---
     override suspend fun load(url: String): LoadResponse {
-        val animeId = url
-        // Çalışan alternatif istek adresi:
-        val listDetailUrl = "$apiUrl/page/list?type=anime&id=$animeId&direct=true"
-        val fallbackDetailUrl = "$apiUrl/anime/get?id=$animeId"
+        val animeId = url.trim()
         
+        // 1. İSTEK: Künye Bilgileri için
+        val mainDetailUrl = "$apiUrl/anime/get?id=$animeId"
+
         var title = "Anime"
         var poster: String? = null
         var bannerUrl: String? = null
@@ -149,33 +145,21 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            // Önce çalışan list URL'ini çağırıyoruz
-            var jsonText = ""
-            try {
-                jsonText = app.get(listDetailUrl, headers = apiHeaders).text
-            } catch (e: Exception) {
-                // Eğer hata alırsak fallback endpoint'i deniyoruz
-                jsonText = app.get(fallbackDetailUrl, headers = apiHeaders).text
-            }
+            // A) Künye Bilgilerini Çekiyoruz (/anime/get)
+            val mainResText = app.get(mainDetailUrl, headers = apiHeaders).text
+            val mainNode = mapper.readTree(mainResText)
+            val dataNode = if (mainNode.has("data") && !mainNode.get("data").isNull) mainNode.get("data") else mainNode
 
-            val node = mapper.readTree(jsonText)
-            val dataNode = if (node.has("data")) node.get("data") else node
-
-            // 1. İsim
             title = dataNode.get("name_tr")?.asText() 
                 ?: dataNode.get("name")?.asText() 
                 ?: dataNode.get("title")?.asText() 
                 ?: "Anime"
 
-            // 2. Poster ve Banner
             poster = fixUrlNull(dataNode.get("poster")?.asText() ?: dataNode.get("mobile_poster_link")?.asText())
-            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner_link")?.asText() ?: dataNode.get("banner")?.asText())
-
-            // 3. Konu
+            bannerUrl = fixUrlNull(dataNode.get("banner_link")?.asText() ?: dataNode.get("details_banner")?.asText())
             description = dataNode.get("overview")?.asText() ?: dataNode.get("overview_short")?.asText()
 
-            // 4. Türler
-            val genreNode = dataNode.get("genre")
+            val genreNode = dataNode.get("genre") ?: dataNode.get("genres")
             if (genreNode != null && genreNode.isArray) {
                 genreNode.forEach { g ->
                     val gName = g.get("name")?.asText()
@@ -183,20 +167,35 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // 5. Sezonlar ve Bölümler Parsing
-            val seasonsNode = dataNode.get("seasons")
+            // Eğer künye içerisinde farklı bir `series_id` varsa onu yakala, yoksa gelen ID ile devam et
+            val targetSeriesId = dataNode.get("series_id")?.asText() 
+                ?: dataNode.get("series")?.get("id")?.asText() 
+                ?: animeId
+
+            // B) Bölüm ve Sezon Bilgilerini Çekiyoruz (/series?id=...)
+            val seriesResText = try {
+                app.get("$apiUrl/series?id=$targetSeriesId", headers = apiHeaders).text
+            } catch (e: Exception) {
+                // Eğer /series çağrısı patlarsa ana yanıttaki veriyi kullanmaya çalış
+                mainResText 
+            }
+
+            val seriesNode = mapper.readTree(seriesResText)
+            val seriesDataNode = if (seriesNode.has("data") && !seriesNode.get("data").isNull) seriesNode.get("data") else seriesNode
+
+            // Sezon dizisinden bölümleri ayıklama
+            val seasonsNode = seriesDataNode.get("seasons") ?: dataNode.get("seasons")
             if (seasonsNode != null && seasonsNode.isArray) {
                 seasonsNode.forEach { season ->
-                    val seasonNumber = season.get("number")?.asInt() ?: 1
+                    val seasonNumber = season.get("number")?.asInt() ?: season.get("season_number")?.asInt() ?: 1
                     val epList = season.get("episodes") ?: season.get("series")
                     
                     epList?.forEach { ep ->
                         val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
                         val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                        val epNum = ep.get("number")?.asInt()
-                        val videoData = ep.get("video")?.asText() ?: ep.get("file")?.asText() ?: epId
+                        val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
-                        episodesList.add(newEpisode(videoData) {
+                        episodesList.add(newEpisode(epId) {
                             this.name = epName
                             this.season = seasonNumber
                             this.episode = epNum
@@ -205,16 +204,15 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // Eğer 'seasons' yoksa düz 'episodes' dizisine bak
+            // Sezon objesi yoksa doğrudan bölüm dizisini ayıklama
             if (episodesList.isEmpty()) {
-                val directEpList = dataNode.get("episodes") ?: dataNode.get("series")
+                val directEpList = seriesDataNode.get("episodes") ?: seriesDataNode.get("series") ?: dataNode.get("episodes")
                 directEpList?.forEach { ep ->
                     val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
                     val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                    val epNum = ep.get("number")?.asInt()
-                    val videoData = ep.get("video")?.asText() ?: ep.get("file")?.asText() ?: epId
+                    val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
-                    episodesList.add(newEpisode(videoData) {
+                    episodesList.add(newEpisode(epId) {
                         this.name = epName
                         this.episode = epNum
                     })
@@ -234,7 +232,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO OYNATICI ---
+    // --- 4. VİDEO LINKLERININ YÜKLENMESI ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -242,7 +240,16 @@ class AniziumProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val videoUrl = if (data.startsWith("http")) data else "$apiUrl/episode/get?id=$data"
+            val episodeApiUrl = "$apiUrl/episode/get?id=$data"
+            val jsonText = app.get(episodeApiUrl, headers = apiHeaders).text
+            val node = mapper.readTree(jsonText)
+            val dataNode = if (node.has("data") && !node.get("data").isNull) node.get("data") else node
+
+            val videoUrl = dataNode.get("video")?.asText() 
+                ?: dataNode.get("file")?.asText() 
+                ?: dataNode.get("stream_url")?.asText() 
+                ?: return false
+
             val isM3u8 = videoUrl.contains(".m3u8")
 
             offsetCallback.invoke(
@@ -258,6 +265,7 @@ class AniziumProvider : MainAPI() {
             )
             true
         } catch (e: Exception) {
+            e.printStackTrace()
             false
         }
     }
