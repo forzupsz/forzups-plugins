@@ -3,7 +3,7 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -26,37 +26,36 @@ class AniziumProvider : MainAPI() {
         "language" to "tr"
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ApiResponse(
+        @JsonProperty("page") val page: PageData? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class PageData(
+        @JsonProperty("data") val data: List<AnimeItem>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class AnimeItem(
-        @JsonProperty("id") val id: Any? = null,
-        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("ID") val id: String? = null,
         @JsonProperty("name") val name: String? = null,
-        @JsonProperty("slug") val slug: String? = null,
         @JsonProperty("poster") val poster: String? = null,
-        @JsonProperty("image") val image: String? = null,
-        @JsonProperty("cover") val cover: String? = null
+        @JsonProperty("type") val type: String? = null
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<SearchResponse>()
         try {
             val jsonUrl = "$apiUrl/page/top?platform=favorite&page=1"
-            val jsonText = app.get(jsonUrl, headers = apiHeaders).text
+            val response = app.get(jsonUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
             
-            val mapper = mapper
-            val parsedList = try {
-                val node = mapper.readTree(jsonText)
-                val arrayNode = if (node.has("data")) node.get("data") else if (node.has("animes")) node.get("animes") else node
-                mapper.readValue<List<AnimeItem>>(arrayNode.toString())
-            } catch (e: Exception) {
-                emptyList()
-            }
+            response?.page?.data?.forEach { anime ->
+                val animeName = anime.name ?: return@forEach
+                val animeId = anime.id ?: return@forEach
+                val posterUrl = fixUrlNull(anime.poster)
 
-            parsedList.forEach { anime ->
-                val animeTitle = anime.title ?: anime.name ?: return@forEach
-                val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
-                val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
-
-                items.add(newAnimeSearchResponse(animeTitle, "$mainUrl/anime/$animeSlug", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, "$mainUrl/anime/$animeId", TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
@@ -74,23 +73,14 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         try {
             val searchUrl = "$apiUrl/search?q=$query"
-            val jsonText = app.get(searchUrl, headers = apiHeaders).text
-            
-            val mapper = mapper
-            val parsedList = try {
-                val node = mapper.readTree(jsonText)
-                val arrayNode = if (node.has("data")) node.get("data") else if (node.has("animes")) node.get("animes") else node
-                mapper.readValue<List<AnimeItem>>(arrayNode.toString())
-            } catch (e: Exception) {
-                emptyList()
-            }
+            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
 
-            parsedList.forEach { anime ->
-                val animeTitle = anime.title ?: anime.name ?: return@forEach
-                val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
-                val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
+            response?.page?.data?.forEach { anime ->
+                val animeName = anime.name ?: return@forEach
+                val animeId = anime.id ?: return@forEach
+                val posterUrl = fixUrlNull(anime.poster)
 
-                items.add(newAnimeSearchResponse(animeTitle, "$mainUrl/anime/$animeSlug", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, "$mainUrl/anime/$animeId", TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
