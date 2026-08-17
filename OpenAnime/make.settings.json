@@ -1,10 +1,10 @@
 {
-  "name": "Anizium",
+  "name": "OpenAnime",
   "author": "forzupsz",
-  "description": "Anizium CloudStream Eklentisi",
+  "description": "OpenAnime CloudStream Eklentisi",
   "language": "tr",
   "tvTypes": [
     "Anime"
   ],
-  "iconUrl": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/Anizium/icon.png"
+  "iconUrl": "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/OpenAnime/icon.png"
 }
