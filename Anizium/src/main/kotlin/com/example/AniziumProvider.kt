@@ -66,33 +66,6 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("data") val data: List<AnimeItem>? = null
     )
 
-    // --- VIDEO LOADLINKS JSON MODELLERI ---
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniziumSourceResponse(
-        @JsonProperty("success") val success: Boolean? = null,
-        @JsonProperty("content") val content: AniziumContent? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniziumContent(
-        @JsonProperty("groups") val groups: List<AniziumGroup>? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniziumGroup(
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("platform") val platform: String? = null,
-        @JsonProperty("items") val items: List<AniziumItem>? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniziumItem(
-        @JsonProperty("quality") val quality: Int? = null,
-        @JsonProperty("link") val link: String? = null,
-        @JsonProperty("type") val type: String? = null
-    )
-
     // --- YARDIMCI FONKSİYONLAR ---
 
     private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
@@ -170,7 +143,6 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            // A) Künye Bilgisi
             val mainResText = app.get(mainDetailUrl, headers = apiHeaders).text
             val mainNode = mapper.readTree(mainResText)
             val dataNode = if (mainNode.has("data") && !mainNode.get("data").isNull) mainNode.get("data") else mainNode
@@ -192,7 +164,6 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // B) Series ID Tespiti ve Bölüm Çekme
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
@@ -221,7 +192,7 @@ class AniziumProvider : MainAPI() {
                             val epList = season.get("episodes") ?: season.get("series")
                             
                             epList?.forEach { ep ->
-                                val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                                val epId = ep.get("id")?.asText() ?: ep.get("ID")?.asText() ?: return@forEach
                                 val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                                 val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
@@ -235,7 +206,7 @@ class AniziumProvider : MainAPI() {
                     } else {
                         val directEpList = animeSeriesObj.get("episodes") ?: animeSeriesObj.get("series")
                         directEpList?.forEach { ep ->
-                            val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                            val epId = ep.get("id")?.asText() ?: ep.get("ID")?.asText() ?: return@forEach
                             val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                             val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
@@ -269,35 +240,43 @@ class AniziumProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart&season=1&episode=1"
-            
-            val response = app.get(sourceApiUrl, headers = apiHeaders).parsedSafe<AniziumSourceResponse>()
+            val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart"
+            val resText = app.get(sourceApiUrl, headers = apiHeaders).text
+            val rootNode = mapper.readTree(resText)
 
-            if (response?.success == true && response.content?.groups != null) {
-                for (group in response.content.groups) {
-                    val groupName = group.name ?: "Video"
-                    
-                    group.items?.forEach { item ->
-                        val streamUrl = item.link ?: return@forEach
-                        val qualityVal = item.quality ?: Qualities.Unknown.value
+            var found = false
+            val contentNode = rootNode.get("content")
+            val groupsNode = contentNode?.get("groups")
 
-                        offsetCallback.invoke(
-                            newExtractorLink(
-                                name = "${this.name} - $groupName",
-                                source = this.name,
-                                url = streamUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "https://anizium.co/"
-                                this.quality = qualityVal
-                            }
-                        )
+            if (groupsNode != null && groupsNode.isArray) {
+                groupsNode.forEach { group ->
+                    val groupName = group.get("name")?.asText() ?: "Video"
+                    val itemsNode = group.get("items")
+
+                    if (itemsNode != null && itemsNode.isArray) {
+                        itemsNode.forEach { item ->
+                            val rawLink = item.get("link")?.asText() ?: return@forEach
+                            val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
+
+                            val streamUrl = fixUrl(rawLink)
+
+                            offsetCallback.invoke(
+                                newExtractorLink(
+                                    name = "${this.name} - $groupName",
+                                    source = this.name,
+                                    url = streamUrl,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = "https://anizium.co/"
+                                    this.quality = qualityVal
+                                }
+                            )
+                            found = true
+                        }
                     }
                 }
-                true
-            } else {
-                false
             }
+            found
         } catch (e: Exception) {
             e.printStackTrace()
             false
