@@ -189,7 +189,6 @@ class AniziumProvider : MainAPI() {
                     g.name?.let { genreTags.add(it) }
                 }
 
-                // GÖRSELDEKİ 'seasons' -> 'episodes' HİYERARŞİSİ
                 anime.seasons?.forEach { season ->
                     val seasonNumber = season.number ?: 1
                     
@@ -207,7 +206,6 @@ class AniziumProvider : MainAPI() {
                     }
                 }
 
-                // Eğer 'seasons' yoksa düz 'episodes' dizisini kontrol et
                 if (episodesList.isEmpty()) {
                     anime.episodes?.forEach { ep ->
                         val epId = ep.id ?: return@forEach
@@ -234,7 +232,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO OYNATICI ---
+    // --- 4. VİDEO OYNATICI (GÜNCELLENDİ: newExtractorLink KULLANILDI) ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -244,15 +242,18 @@ class AniziumProvider : MainAPI() {
         return try {
             val videoUrl = if (data.startsWith("http")) data else "$apiUrl/episode/get?id=$data"
 
+            val isM3u8 = videoUrl.contains(".m3u8")
+
             offsetCallback.invoke(
-                ExtractorLink(
+                newExtractorLink(
                     source = name,
                     name = name,
                     url = videoUrl,
-                    referer = "$mainUrl/",
-                    quality = Qualities.Unknown.value,
-                    isM3u8 = videoUrl.contains(".m3u8")
-                )
+                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.Unknown.value
+                }
             )
             true
         } catch (e: Exception) {
