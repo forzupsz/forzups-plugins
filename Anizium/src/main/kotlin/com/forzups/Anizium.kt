@@ -1,353 +1,938 @@
-package com.kerimmkirac
+package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.nicehttp.NiceResponse
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
+import com.fasterxml.jackson.databind.JsonNode
+import java.net.URLEncoder
 
-/**
- * ------------------------------------------------------------------
- *  DİKKAT — bu dosya elle yazılmadı.
- *  Anizium.cs3 içindeki classes.dex dosyası, doğrudan bir Python
- *  DEX parser'ı ile "decompile" edilerek (tam bytecode->kaynak kod
- *  çevirisi değil; string sabitleri, sınıf/alan/metot imzaları ve
- *  SourceDebugExtension (SMAP) satır haritası okunarak) yeniden
- *  kurulmuştur. SMAP kaydı orijinal dosyanın adının "Anizium.kt"
- *  olduğunu ve orijinal dosyanın 475 satır olduğunu doğruluyor.
- *
- *  Aşağıdaki her şey doğrulanmış (dex string tablosundan direkt
- *  okunmuş) veriler:
- *    - mainUrl, name, lang, mainPage girişleri (URL + başlık)
- *    - tüm HTTP header'ları (User-Agent, Origin, Referer, vs.)
- *    - tüm API endpoint'leri (/anime/get, /anime/similar,
- *      /anime/source, /page/catalog, /page/search, /page/last-
- *      added-episodes)
- *    - tüm JSON veri sınıflarının alan adları (AnimeData,
- *      AnimeDetails, Season, EpisodeData, SourceGroup, SourceItem,
- *      SubtitleData, PageInfo, vs.)
- *
- *  Bytecode'un TAM akışı (if/else dallanmaları, hangi alanın hangi
- *  sırayla okunduğu) satır satır geri kazanılmadı — o kısımlar
- *  CloudStream'in tipik "MainAPI" kalıbına göre YENİDEN YAZILDI.
- *  Yani mantık %95 doğru olmalı ama derleyip test etmeden
- *  güvenme; özellikle loadLinks() içindeki quality/type eşleştirmesi
- *  ve "cf-control" / "user-session" header değerleri (bunlar sabit
- *  kodlanmış, muhtemelen zaman aşımına uğrayan Cloudflare/oturum
- *  tokenleri) gözden geçirilmeli.
- * ------------------------------------------------------------------
- */
-class Anizium : MainAPI() {
-    override var mainUrl = "https://api.anizium.co"
+class AniziumProvider : MainAPI() {
+
+    override var mainUrl = "https://anizium.co"
+    private val apiUrl = "https://api.anizium.co"
+    private val sourceUrl = "https://x.anizium.co"
+
     override var name = "Anizium"
-    override var lang = "tr"
     override val hasMainPage = true
     override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
+    override var lang = "tr"
+    override val supportedTypes = setOf(TvType.Anime)
 
-    // Sitenin web arayüzü (Origin/Referer için)
-    private val siteUrl = "https://x.anizium.co"
-
-    override var headers = mapOf(
-        "cf-control" to "134e4c040840015655080906544d030f004b4c075b54500f", // dex'te sabit kodlanmış — muhtemelen eski/zaman aşımlı, çalışmazsa siteden güncel değerle değiştir
-        "sec-ch-ua-platform" to "\"Windows\"",
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-        "accept" to "application/json, text/plain, */*",
-        "sec-ch-ua" to "\"Not;A=Brand\";v=\"99\", \"Brave\";v=\"139\", \"Chromium\";v=\"139\"",
+    private val apiHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "Accept" to "application/json, text/plain, */*",
+        "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Content-Type" to "application/json",
+        "Origin" to mainUrl,
+        "Referer" to "$mainUrl/",
+        "Cf-Control" to "134e1a5e0909175c55080906594e0d040b4440075851560f",
+        "Site" to "main",
+        "Device" to "browser",
+        "Language" to "tr",
+        "User-Profile" to "null",
+        "User-Session" to "null",
+        "sec-ch-ua" to "\"Not;A=Brand\";v=\"99\", \"Chromium\";v=\"139\"",
         "sec-ch-ua-mobile" to "?0",
-        "sec-gpc" to "1",
-        "accept-language" to "tr-TR,tr;q=0.5",
-        "origin" to siteUrl,
-        "sec-fetch-site" to "same-site",
-        "sec-fetch-mode" to "cors",
-        "sec-fetch-dest" to "empty",
-        "referer" to "$siteUrl/",
-        "accept-encoding" to "identity",
-        "priority" to "u=1, i",
-        "user-profile" to "null",
-        "user-session" to "01570d01545f55510102040f525d390e00094f0556514e2d1d5201580100071e030350115a53534c05550f535143455c085c54101215" // dex'te sabit kodlanmış — muhtemelen eski/zaman aşımlı, çalışmazsa siteden güncel değerle değiştir
+        "sec-ch-ua-platform" to "\"Windows\""
     )
 
-    override val mainPage = mainPageOf(
-        "/page/last-added-episodes?page=" to "Yeni Bölümler",
-        "/page/catalog?id=series&type=type&page=" to "Tüm Animeler",
-        "/page/catalog?id=movie&type=type&page=" to "Tüm Filmler",
-        "/page/catalog?id=trdub&type=sound_group&page=" to "Türkçe Dublaj",
-    )
+    private fun text(node: JsonNode?, vararg keys: String): String? {
+        if (node == null) return null
 
-    // ---------------------------------------------------------------
-    //  JSON MODELLERİ  (alan adları dex'ten doğrulandı)
-    // ---------------------------------------------------------------
+        for (key in keys) {
+            val value = node.get(key)
 
-    @Serializable
-    data class ApiResponse(
-        val success: Boolean,
-        val page: PageInfo? = null,
-    )
+            if (value != null && !value.isNull) {
+                val result = value.asText()
 
-    @Serializable
-    data class PageInfo(
-        val page: Int,
-        val perPageItems: Int,
-        val previousPage: Int? = null,
-        val nextPage: Int? = null,
-        val totalPages: Int,
-        val data: List<AnimeData> = emptyList(),
-    )
-
-    @Serializable
-    data class AnimeData(
-        val id: String,
-        val type: String? = null,
-        val poster: String? = null,
-        val name: String,
-        val overview: String? = null,
-        val imdbPoint: Double? = null,
-        val genre: List<Genre>? = null,
-    )
-
-    @Serializable
-    data class Genre(
-        val id: String,
-        val name: String,
-    )
-
-    // "Yeni Bölümler" sayfası ayrı bir response şeması kullanıyor
-    @Serializable
-    data class LatestEpisodeResponse(
-        val success: Boolean,
-        val page: LatestEpisodePage? = null,
-    )
-
-    @Serializable
-    data class LatestEpisodePage(
-        val data: List<LatestEpisodeData> = emptyList(),
-    )
-
-    @Serializable
-    data class LatestEpisodeData(
-        val id: String,
-        val name: String,
-        val poster: String? = null,
-        val season: Int,
-        val episode: Int,
-    )
-
-    // /anime/get?id=  -> detay sayfası
-    @Serializable
-    data class AnimeDetailsResponse(
-        val success: Boolean,
-        val data: AnimeDetails? = null,
-    )
-
-    @Serializable
-    data class AnimeDetails(
-        val id: String,
-        val type: String? = null,
-        val detailsBanner: String? = null,
-        val name: String,
-        val overview: String? = null,
-        val releaseYear: Int? = null,
-        val genre: List<Genre>? = null,
-        val imdbPoint: Double? = null,
-        val seasons: List<Season>? = null,
-    )
-
-    @Serializable
-    data class Season(
-        val id: String,
-        val name: String,
-        val number: Int,
-        val episodes: List<EpisodeData> = emptyList(),
-    )
-
-    @Serializable
-    data class EpisodeData(
-        val id: String,
-        val name: String? = null,
-        val number: Int,
-        val overview: String? = null,
-        val bannerLink: String? = null,
-    )
-
-    // /anime/similar?id=
-    @Serializable
-    data class SimilarResponse(
-        val success: Boolean,
-        val data: List<AnimeData> = emptyList(),
-    )
-
-    // /anime/source?id=  -> izleme kaynakları
-    @Serializable
-    data class SourceResponse(
-        val success: Boolean,
-        val content: SourceContent? = null,
-        val subtitles: List<SubtitleData> = emptyList(),
-        val groups: List<SourceGroup> = emptyList(),
-    )
-
-    @Serializable
-    data class SourceContent(
-        val name: String? = null,
-        val type: String? = null,
-    )
-
-    @Serializable
-    data class SourceGroup(
-        val platform: String? = null,
-        val group: String? = null,
-        val name: String? = null,
-        val type: String? = null,
-        val items: List<SourceItem> = emptyList(),
-        val row: Int? = null,
-    )
-
-    @Serializable
-    data class SourceItem(
-        val link: String,
-        val quality: Int? = null,
-        val type: String? = null,
-    )
-
-    @Serializable
-    data class SubtitleData(
-        val group: String? = null,
-        val name: String? = null,
-        val link: String,
-        val row: Int? = null,
-    )
-
-    // ---------------------------------------------------------------
-    //  YARDIMCI: AnimeData -> SearchResponse
-    // ---------------------------------------------------------------
-    private fun AnimeData.toSearchResponse(): SearchResponse {
-        val tvType = if (this.type == "movie") TvType.AnimeMovie else TvType.Anime
-        return newAnimeSearchResponse(this.name, "$mainUrl/anime/get?id=${this.id}", tvType) {
-            this.posterUrl = this@toSearchResponse.poster
-        }
-    }
-
-    private fun LatestEpisodeData.toSearchResponse(): SearchResponse {
-        return newAnimeSearchResponse(this.name, "$mainUrl/anime/get?id=${this.id}", TvType.Anime) {
-            this.posterUrl = this@toSearchResponse.poster
-        }
-    }
-
-    // ---------------------------------------------------------------
-    //  ANA SAYFA
-    // ---------------------------------------------------------------
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = "$mainUrl${request.data}$page"
-        val res = app.get(url, headers = headers).text
-
-        return if (request.data.contains("last-added-episodes")) {
-            val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<LatestEpisodeResponse>(res)
-            val items = parsed.page?.data?.map { it.toSearchResponse() } ?: emptyList()
-            newHomePageResponse(request.name, items, hasNext = false)
-        } else {
-            val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<ApiResponse>(res)
-            val items = parsed.page?.data?.map { it.toSearchResponse() } ?: emptyList()
-            val hasNext = parsed.page?.nextPage != null
-            newHomePageResponse(request.name, items, hasNext = hasNext)
-        }
-    }
-
-    // ---------------------------------------------------------------
-    //  ARAMA
-    // ---------------------------------------------------------------
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/page/search?value=$query"
-        val res = app.get(url, headers = headers).text
-        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<ApiResponse>(res)
-        return parsed.page?.data?.map { it.toSearchResponse() } ?: emptyList()
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
-
-    // ---------------------------------------------------------------
-    //  DETAY SAYFASI
-    // ---------------------------------------------------------------
-    override suspend fun load(url: String): LoadResponse {
-        // url = "$mainUrl/anime/get?id=xxx" formatında geliyor (search/mainpage'den)
-        val id = url.substringAfter("id=")
-        val res = app.get("$mainUrl/anime/get?id=$id", headers = headers).text
-        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<AnimeDetailsResponse>(res)
-        val details = parsed.data ?: throw ErrorLoadingException("Anime bulunamadı")
-
-        val episodes = details.seasons?.flatMap { season ->
-            season.episodes.map { ep ->
-                newEpisode(data = "$mainUrl/anime/source?id=${ep.id}") {
-                    this.name = ep.name
-                    this.season = season.number
-                    this.episode = ep.number
-                    this.posterUrl = ep.bannerLink
-                    this.description = ep.overview
+                if (result.isNotBlank() && result != "null") {
+                    return result
                 }
             }
-        } ?: emptyList()
+        }
 
-        return if (details.type == "movie") {
-            newMovieLoadResponse(details.name, url, TvType.AnimeMovie, "$mainUrl/anime/source?id=${details.id}") {
-                this.posterUrl = details.detailsBanner
-                this.plot = details.overview
-                this.year = details.releaseYear
-                this.tags = details.genre?.map { it.name }
-                this.rating = details.imdbPoint?.let { (it * 1000).toInt() }
+        return null
+    }
+
+    private fun int(node: JsonNode?, vararg keys: String): Int? {
+        if (node == null) return null
+
+        for (key in keys) {
+            val value = node.get(key)
+
+            if (value != null && !value.isNull) {
+                if (value.isInt || value.isLong || value.isNumber) {
+                    return value.asInt()
+                }
+
+                value.asText().toIntOrNull()?.let {
+                    return it
+                }
             }
+        }
+
+        return null
+    }
+
+    private fun array(node: JsonNode?, vararg keys: String): JsonNode? {
+        if (node == null) return null
+
+        for (key in keys) {
+            val value = node.get(key)
+
+            if (value != null && value.isArray) {
+                return value
+            }
+        }
+
+        return null
+    }
+
+    private fun unwrap(node: JsonNode?): JsonNode? {
+        if (node == null) return null
+
+        return if (node.has("data") && !node.get("data").isNull) {
+            node.get("data")
         } else {
-            newAnimeLoadResponse(details.name, url, TvType.Anime) {
-                this.posterUrl = details.detailsBanner
-                this.plot = details.overview
-                this.year = details.releaseYear
-                this.tags = details.genre?.map { it.name }
-                this.rating = details.imdbPoint?.let { (it * 1000).toInt() }
-                addEpisodes(DubStatus.Subbed, episodes)
+            node
+        }
+    }
+
+    private fun parseAnimeList(list: JsonNode?): List<SearchResponse> {
+        if (list == null || !list.isArray) {
+            return emptyList()
+        }
+
+        return list.mapNotNull { anime ->
+            val name = text(
+                anime,
+                "name_tr",
+                "name",
+                "title"
+            ) ?: return@mapNotNull null
+
+            val id = text(
+                anime,
+                "ID",
+                "id",
+                "series_id",
+                "slug"
+            ) ?: return@mapNotNull null
+
+            newAnimeSearchResponse(
+                name,
+                id,
+                TvType.Anime
+            ) {
+                posterUrl = fixUrlNull(
+                    text(
+                        anime,
+                        "poster",
+                        "poster_url",
+                        "mobile_poster_link"
+                    )
+                )
             }
         }
     }
 
-    // ---------------------------------------------------------------
-    //  İZLEME LİNKLERİ
-    // ---------------------------------------------------------------
+    private fun extractPageList(node: JsonNode?): JsonNode? {
+        if (node == null) return null
+
+        if (node.isArray) {
+            return node
+        }
+
+        val page = node.get("page")
+
+        if (page != null) {
+            if (page.isArray) {
+                return page
+            }
+
+            array(
+                page,
+                "data",
+                "items",
+                "episodes"
+            )?.let {
+                return it
+            }
+        }
+
+        return array(
+            node,
+            "data",
+            "items",
+            "results"
+        )
+    }
+
+    private fun addEpisodesFromNode(
+        container: JsonNode?,
+        episodes: MutableList<Episode>,
+        defaultSeason: Int = 1
+    ) {
+        if (container == null) return
+
+        val seasons = array(
+            container,
+            "seasons"
+        )
+
+        if (seasons != null) {
+            seasons.forEach { seasonNode ->
+
+                val seasonNumber =
+                    int(
+                        seasonNode,
+                        "number",
+                        "season_number",
+                        "season"
+                    ) ?: defaultSeason
+
+                val seasonEpisodes = array(
+                    seasonNode,
+                    "episodes",
+                    "series",
+                    "data"
+                )
+
+                seasonEpisodes?.forEach { episode ->
+                    addSingleEpisode(
+                        episode,
+                        episodes,
+                        seasonNumber
+                    )
+                }
+            }
+
+            return
+        }
+
+        val directEpisodes = array(
+            container,
+            "episodes",
+            "series",
+            "data"
+        )
+
+        directEpisodes?.forEach { episode ->
+            addSingleEpisode(
+                episode,
+                episodes,
+                defaultSeason
+            )
+        }
+    }
+
+    private fun addSingleEpisode(
+        episodeNode: JsonNode?,
+        episodes: MutableList<Episode>,
+        defaultSeason: Int
+    ) {
+        if (episodeNode == null) return
+
+        val id = text(
+            episodeNode,
+            "id",
+            "ID",
+            "episode_id"
+        ) ?: return
+
+        val episodeNumber =
+            int(
+                episodeNode,
+                "number",
+                "episode_number",
+                "episode"
+            ) ?: 1
+
+        val seasonNumber =
+            int(
+                episodeNode,
+                "season",
+                "season_number"
+            ) ?: defaultSeason
+
+        val episodeName =
+            text(
+                episodeNode,
+                "name",
+                "title"
+            ) ?: "Bölüm $episodeNumber"
+
+        val data = "$id|$seasonNumber|$episodeNumber"
+
+        episodes.add(
+            newEpisode(data) {
+                name = episodeName
+                season = seasonNumber
+                episode = episodeNumber
+            }
+        )
+    }
+
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+
+        val homePageList = ArrayList<HomePageList>()
+
+        try {
+            val latestText = app.get(
+                "$apiUrl/page/last-added-episodes?page=1",
+                headers = apiHeaders
+            ).text
+
+            val latestNode = mapper.readTree(latestText)
+
+            val latestList = extractPageList(latestNode)
+
+            val latestItems = parseAnimeList(latestList)
+
+            if (latestItems.isNotEmpty()) {
+                homePageList.add(
+                    HomePageList(
+                        "Son Eklenen Bölümler",
+                        latestItems
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val homeText = app.get(
+                "$apiUrl/page/home",
+                headers = apiHeaders
+            ).text
+
+            val home = mapper.readTree(homeText)
+
+            val homeData =
+                if (home.has("data") && !home.get("data").isNull)
+                    home.get("data")
+                else
+                    home
+
+            val top = parseAnimeList(
+                homeData.get("settlement_top")
+            )
+
+            if (top.isNotEmpty()) {
+                homePageList.add(
+                    HomePageList(
+                        "Öne Çıkan Animeler",
+                        top
+                    )
+                )
+            }
+
+            val middle = parseAnimeList(
+                homeData.get("settlement_middle")
+            )
+
+            if (middle.isNotEmpty()) {
+                homePageList.add(
+                    HomePageList(
+                        "Haftanın En Çok İzlenenleri",
+                        middle
+                    )
+                )
+            }
+
+            val special = homeData.get("special_list")
+
+            if (special != null && special.isArray) {
+                special.forEach { category ->
+
+                    val categoryName =
+                        text(category, "name")
+                            ?: return@forEach
+
+                    val categoryData =
+                        parseAnimeList(
+                            category.get("data")
+                        )
+
+                    if (categoryData.isNotEmpty()) {
+                        homePageList.add(
+                            HomePageList(
+                                categoryName,
+                                categoryData
+                            )
+                        )
+                    }
+                }
+            }
+
+            val lower = parseAnimeList(
+                homeData.get("settlement_lower")
+            )
+
+            if (lower.isNotEmpty()) {
+                homePageList.add(
+                    HomePageList(
+                        "Önerilen Animeler",
+                        lower
+                    )
+                )
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return newHomePageResponse(
+            list = homePageList,
+            hasNext = false
+        )
+    }
+
+    override suspend fun search(
+        query: String
+    ): List<SearchResponse> {
+
+        return try {
+
+            val encodedQuery =
+                URLEncoder.encode(
+                    query.trim(),
+                    "UTF-8"
+                )
+
+            val searchUrl =
+                "$apiUrl/page/search?value=$encodedQuery&page=1"
+
+            val response = app.get(
+                searchUrl,
+                headers = apiHeaders
+            ).text
+
+            val node = mapper.readTree(response)
+
+            val list = extractPageList(node)
+
+            parseAnimeList(list)
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    override suspend fun load(
+        url: String
+    ): LoadResponse {
+
+        val rawAnimeId =
+            url.substringAfterLast("/")
+                .substringBefore("?")
+                .trim()
+
+        val cleanAnimeId =
+            rawAnimeId.ifBlank {
+                url.trim()
+            }
+
+        var title = "Anime"
+        var poster: String? = null
+        var banner: String? = null
+        var description: String? = null
+
+        val tags = ArrayList<String>()
+        val episodes = ArrayList<Episode>()
+
+        try {
+
+            val detailUrl =
+                "$apiUrl/anime/get?id=$cleanAnimeId"
+
+            val response = app.get(
+                detailUrl,
+                headers = apiHeaders
+            ).text
+
+            val root = mapper.readTree(response)
+
+            val data =
+                unwrap(root)
+                    ?: root
+
+            title =
+                text(
+                    data,
+                    "name_tr",
+                    "name",
+                    "title"
+                ) ?: "Anime"
+
+            poster =
+                fixUrlNull(
+                    text(
+                        data,
+                        "poster",
+                        "mobile_poster_link",
+                        "poster_url"
+                    )
+                )
+
+            banner =
+                fixUrlNull(
+                    text(
+                        data,
+                        "details_banner",
+                        "banner_link",
+                        "banner",
+                        "background"
+                    )
+                )
+
+            description =
+                text(
+                    data,
+                    "overview",
+                    "description",
+                    "overview_short"
+                )
+
+            val genreNode =
+                data.get("genre")
+                    ?: data.get("genres")
+
+            if (genreNode != null && genreNode.isArray) {
+                genreNode.forEach { genre ->
+
+                    val genreName =
+                        text(
+                            genre,
+                            "name",
+                            "title"
+                        )
+
+                    if (!genreName.isNullOrBlank()) {
+                        tags.add(genreName)
+                    }
+                }
+            }
+
+            addEpisodesFromNode(
+                data,
+                episodes
+            )
+
+            if (episodes.isEmpty()) {
+
+                val seriesId =
+                    text(
+                        data,
+                        "series_id"
+                    )
+                        ?: data.get("series")
+                            ?.let {
+                                if (it.isObject)
+                                    text(it, "id", "ID")
+                                else
+                                    it.asText()
+                            }
+                        ?: text(
+                            data,
+                            "ID",
+                            "id"
+                        )
+                        ?: cleanAnimeId
+
+                try {
+
+                    val seriesUrl =
+                        "$apiUrl/anime/series?id=$seriesId"
+
+                    val seriesResponse =
+                        app.get(
+                            seriesUrl,
+                            headers = apiHeaders
+                        ).text
+
+                    val seriesRoot =
+                        mapper.readTree(seriesResponse)
+
+                    val seriesData =
+                        unwrap(seriesRoot)
+                            ?: seriesRoot
+
+                    addEpisodesFromNode(
+                        seriesData,
+                        episodes
+                    )
+
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return newAnimeLoadResponse(
+            title,
+            "$mainUrl/anime/$cleanAnimeId",
+            TvType.Anime
+        ) {
+
+            posterUrl = poster
+            backgroundPosterUrl = banner
+            plot = description
+            this.tags = tags
+
+            addEpisodes(
+                DubStatus.Subbed,
+                episodes
+            )
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
-        // data = "$mainUrl/anime/source?id=xxx"
-        val res = app.get(data, headers = headers).text
-        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<SourceResponse>(res)
-        if (!parsed.success) return false
 
-        parsed.groups.forEach { group ->
-            group.items.forEach { item ->
-                callback(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "${group.platform ?: group.name ?: this.name}",
-                        url = item.link,
-                        type = if (item.link.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$siteUrl/"
-                        this.quality = item.quality ?: Qualities.Unknown.value
-                    }
+        var episodeId = data
+        var season = 1
+        var episode = 1
+
+        val parts = data.split("|")
+
+        if (parts.isNotEmpty()) {
+            episodeId = parts[0]
+        }
+
+        if (parts.size >= 2) {
+            season = parts[1].toIntOrNull() ?: 1
+        }
+
+        if (parts.size >= 3) {
+            episode = parts[2].toIntOrNull() ?: 1
+        }
+
+        val oldSourceUrl =
+            "$apiUrl/anime/source?id=${
+                URLEncoder.encode(
+                    episodeId,
+                    "UTF-8"
                 )
+            }&plan=premium&season=$season&episode=$episode&server="
+
+        val newSourceUrl =
+            "$apiUrl/source?id=${
+                URLEncoder.encode(
+                    episodeId,
+                    "UTF-8"
+                )
+            }&site=main&plan=standart"
+
+        var found = false
+
+        try {
+
+            val response =
+                app.get(
+                    oldSourceUrl,
+                    headers = apiHeaders
+                ).text
+
+            val root =
+                mapper.readTree(response)
+
+            val content =
+                root.get("content")
+                    ?: root
+
+            val subtitles =
+                content.get("subtitles")
+                    ?: root.get("subtitles")
+
+            if (subtitles != null && subtitles.isArray) {
+
+                subtitles.forEach { subtitle ->
+
+                    val url =
+                        text(
+                            subtitle,
+                            "link",
+                            "url"
+                        ) ?: return@forEach
+
+                    val language =
+                        text(
+                            subtitle,
+                            "name",
+                            "language",
+                            "label",
+                            "lang"
+                        ) ?: "Turkish"
+
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            lang = language,
+                            url = fixUrl(url)
+                        )
+                    )
+                }
+            }
+
+            val groups =
+                content.get("groups")
+                    ?: root.get("groups")
+
+            if (groups != null && groups.isArray) {
+
+                var serverCounter = 1
+
+                groups.forEach { group ->
+
+                    val groupName =
+                        text(
+                            group,
+                            "name",
+                            "title",
+                            "group"
+                        ) ?: "Server"
+
+                    val items =
+                        group.get("items")
+
+                    if (items != null && items.isArray) {
+
+                        items.forEach { item ->
+
+                            val rawLink =
+                                text(
+                                    item,
+                                    "link",
+                                    "url",
+                                    "sourceUrl",
+                                    "source_url"
+                                ) ?: return@forEach
+
+                            val linkName =
+                                text(
+                                    item,
+                                    "linkName",
+                                    "name",
+                                    "server"
+                                ) ?: "Server $serverCounter"
+
+                            val quality =
+                                int(
+                                    item,
+                                    "quality"
+                                ) ?: Qualities.Unknown.value
+
+                            val finalUrl =
+                                if (
+                                    rawLink.startsWith("http://") ||
+                                    rawLink.startsWith("https://")
+                                ) {
+                                    rawLink
+                                } else {
+                                    "$sourceUrl/$rawLink"
+                                        .replace("//", "/")
+                                        .replace("https:/", "https://")
+                                }
+
+                            offsetCallback.invoke(
+                                newExtractorLink(
+                                    name = "$groupName $linkName",
+                                    source = this.name,
+                                    url = finalUrl,
+                                    type = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                                        ExtractorLinkType.M3U8
+                                    } else {
+                                        ExtractorLinkType.VIDEO
+                                    }
+                                ) {
+                                    referer = "$sourceUrl/"
+                                    this.quality = quality
+                                }
+                            )
+
+                            found = true
+                            serverCounter++
+                        }
+                    }
+                }
+            }
+
+            if (!found) {
+
+                val directSource =
+                    text(
+                        content,
+                        "sourceUrl",
+                        "source_url"
+                    )
+
+                if (!directSource.isNullOrBlank()) {
+
+                    val finalUrl =
+                        if (
+                            directSource.startsWith("http://") ||
+                            directSource.startsWith("https://")
+                        ) {
+                            directSource
+                        } else {
+                            "$sourceUrl/$directSource"
+                                .replace("//", "/")
+                                .replace("https:/", "https://")
+                        }
+
+                    offsetCallback.invoke(
+                        newExtractorLink(
+                            name = "Anizium",
+                            source = this.name,
+                            url = finalUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            referer = "$sourceUrl/"
+                            quality = Qualities.Unknown.value
+                        }
+                    )
+
+                    found = true
+                }
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        if (!found) {
+
+            try {
+
+                val response =
+                    app.get(
+                        newSourceUrl,
+                        headers = apiHeaders
+                    ).text
+
+                val root =
+                    mapper.readTree(response)
+
+                val content =
+                    root.get("content")
+                        ?: root
+
+                val subtitles =
+                    content.get("subtitles")
+                        ?: root.get("subtitles")
+
+                if (subtitles != null && subtitles.isArray) {
+
+                    subtitles.forEach { subtitle ->
+
+                        val url =
+                            text(
+                                subtitle,
+                                "link",
+                                "url"
+                            ) ?: return@forEach
+
+                        val language =
+                            text(
+                                subtitle,
+                                "name",
+                                "language",
+                                "label",
+                                "lang"
+                            ) ?: "Turkish"
+
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                lang = language,
+                                url = fixUrl(url)
+                            )
+                        )
+                    }
+                }
+
+                val groups =
+                    content.get("groups")
+                        ?: root.get("groups")
+
+                if (groups != null && groups.isArray) {
+
+                    var serverCounter = 1
+
+                    groups.forEach { group ->
+
+                        val groupName =
+                            text(
+                                group,
+                                "name",
+                                "title",
+                                "group"
+                            ) ?: "Server"
+
+                        val items =
+                            group.get("items")
+
+                        if (items != null && items.isArray) {
+
+                            items.forEach { item ->
+
+                                val rawLink =
+                                    text(
+                                        item,
+                                        "link",
+                                        "url",
+                                        "sourceUrl",
+                                        "source_url"
+                                    ) ?: return@forEach
+
+                                val quality =
+                                    int(
+                                        item,
+                                        "quality"
+                                    ) ?: Qualities.Unknown.value
+
+                                val serverName =
+                                    text(
+                                        item,
+                                        "name",
+                                        "server",
+                                        "linkName"
+                                    ) ?: "Server $serverCounter"
+
+                                offsetCallback.invoke(
+                                    newExtractorLink(
+                                        name = "$groupName $serverName",
+                                        source = this.name,
+                                        url = fixUrl(rawLink),
+                                        type = ExtractorLinkType.VIDEO
+                                    ) {
+                                        referer = "$sourceUrl/"
+                                        this.quality = quality
+                                    }
+                                )
+
+                                found = true
+                                serverCounter++
+                            }
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
-        parsed.subtitles.forEach { sub ->
-            subtitleCallback(
-                SubtitleFile(
-                    lang = sub.name ?: sub.group ?: "Türkçe",
-                    url = sub.link
-                )
-            )
-        }
-
-        return parsed.groups.isNotEmpty()
+        return found
     }
 }
