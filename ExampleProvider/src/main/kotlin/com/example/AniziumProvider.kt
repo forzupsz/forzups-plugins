@@ -10,7 +10,7 @@ class AniziumProvider : MainAPI() {
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    // 1. ANA SAYFA: Son eklenen animeleri site HTML'inden çeker
+    // 1. ANA SAYFA
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<SearchResponse>()
         
@@ -30,12 +30,12 @@ class AniziumProvider : MainAPI() {
         }
 
         return newHomePageResponse(
-            listOf(HomePageList("Son Eklenenler", items)),
-            hasMore = false
+            list = HomePageList("Son Eklenenler", items),
+            hasNext = false
         )
     }
 
-    // 2. DETAY SAYFASI: Animenin detaylarını ve bölümlerini yükler (Şimdilik taslak)
+    // 2. DETAY SAYFASI
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
         val title = document.selectFirst("h1, .anime-details .title")?.text() ?: "Bilinmeyen Anime"
@@ -46,7 +46,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // 3. VİDEO LİNKLERİ: Bölüm videolarını çözer (Şimdilik taslak)
+    // 3. VİDEO LİNKLERİ
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
