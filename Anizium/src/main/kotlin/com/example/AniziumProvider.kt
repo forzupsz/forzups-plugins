@@ -16,8 +16,7 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         
         try {
-            val webView = WebViewResolver()
-            val response = app.get(catalogUrl, interceptor = webView)
+            val response = app.get(catalogUrl)
             val document = response.document
 
             document.select("a[href*=/anime/], .anime-card, article, div.poster").forEach { element ->
@@ -52,8 +51,7 @@ class AniziumProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val webView = WebViewResolver()
-        val document = app.get(url, interceptor = webView).document
+        val document = app.get(url).document
         
         val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
         val poster = fixUrlNull(
