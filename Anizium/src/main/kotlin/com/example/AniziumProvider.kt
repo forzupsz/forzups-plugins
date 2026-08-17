@@ -17,15 +17,8 @@ class AniziumProvider : MainAPI() {
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    /*
-     * Eski çalışan plugin'in header yapısına mümkün olduğunca yakın tutuldu.
-     * API değişirse aşağıdaki header'lar tek noktadan değiştirilebilir.
-     */
     private val apiHeaders = mapOf(
-        "User-Agent" to
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
         "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Content-Type" to "application/json",
@@ -72,26 +65,6 @@ class AniziumProvider : MainAPI() {
                 }
 
                 value.asText().toIntOrNull()?.let {
-                    return it
-                }
-            }
-        }
-
-        return null
-    }
-
-    private fun double(node: JsonNode?, vararg keys: String): Double? {
-        if (node == null) return null
-
-        for (key in keys) {
-            val value = node.get(key)
-
-            if (value != null && !value.isNull) {
-                if (value.isNumber) {
-                    return value.asDouble()
-                }
-
-                value.asText().toDoubleOrNull()?.let {
                     return it
                 }
             }
@@ -162,17 +135,35 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    private fun findList(node: JsonNode?): JsonNode? {
+    private fun extractPageList(node: JsonNode?): JsonNode? {
         if (node == null) return null
 
-        if (node.isArray) return node
+        if (node.isArray) {
+            return node
+        }
+
+        val page = node.get("page")
+
+        if (page != null) {
+            if (page.isArray) {
+                return page
+            }
+
+            array(
+                page,
+                "data",
+                "items",
+                "episodes"
+            )?.let {
+                return it
+            }
+        }
 
         return array(
             node,
             "data",
-            "page",
-            "episodes",
-            "series"
+            "items",
+            "results"
         )
     }
 
@@ -183,14 +174,6 @@ class AniziumProvider : MainAPI() {
     ) {
         if (container == null) return
 
-        /*
-         * seasons -> [
-         *   {
-         *     number: 1,
-         *     episodes: [...]
-         *   }
-         * ]
-         */
         val seasons = array(
             container,
             "seasons"
@@ -226,9 +209,6 @@ class AniziumProvider : MainAPI() {
             return
         }
 
-        /*
-         * Doğrudan episodes / series / data array'i.
-         */
         val directEpisodes = array(
             container,
             "episodes",
@@ -281,13 +261,6 @@ class AniziumProvider : MainAPI() {
                 "title"
             ) ?: "Bölüm $episodeNumber"
 
-        /*
-         * loadLinks() eski source endpoint'inin istediği
-         * episode/season bilgisine de erişebilsin.
-         *
-         * Format:
-         * episodeId|season|episode
-         */
         val data = "$id|$seasonNumber|$episodeNumber"
 
         episodes.add(
@@ -299,38 +272,6 @@ class AniziumProvider : MainAPI() {
         )
     }
 
-    private fun extractPageList(node: JsonNode?): JsonNode? {
-        if (node == null) return null
-
-        if (node.isArray) {
-            return node
-        }
-
-        val page = node.get("page")
-
-        if (page != null) {
-            if (page.isArray) {
-                return page
-            }
-
-            array(
-                page,
-                "data",
-                "items",
-                "episodes"
-            )?.let {
-                return it
-            }
-        }
-
-        return array(
-            node,
-            "data",
-            "items",
-            "results"
-        )
-    }
-
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -339,9 +280,6 @@ class AniziumProvider : MainAPI() {
         val homePageList = ArrayList<HomePageList>()
 
         try {
-            /*
-             * Son eklenen bölümler
-             */
             val latestText = app.get(
                 "$apiUrl/page/last-added-episodes?page=1",
                 headers = apiHeaders
@@ -349,13 +287,9 @@ class AniziumProvider : MainAPI() {
 
             val latestNode = mapper.readTree(latestText)
 
-            val latestList = extractPageList(
-                latestNode
-            )
+            val latestList = extractPageList(latestNode)
 
-            val latestItems = parseAnimeList(
-                latestList
-            )
+            val latestItems = parseAnimeList(latestList)
 
             if (latestItems.isNotEmpty()) {
                 homePageList.add(
@@ -370,9 +304,6 @@ class AniziumProvider : MainAPI() {
         }
 
         try {
-            /*
-             * Ana sayfa
-             */
             val homeText = app.get(
                 "$apiUrl/page/home",
                 headers = apiHeaders
@@ -454,44 +385,6 @@ class AniziumProvider : MainAPI() {
             e.printStackTrace()
         }
 
-        /*
-         * Eski plugin'de bulunan kataloglar.
-         *
-         * Bunlardan biri çalışıyorsa ekrana eklenir.
-         * Endpoint değişmişse hata diğer bölümleri engellemez.
-         */
-        val catalogRequests = listOf(
-            "Seriler" to "$apiUrl/page/catalog?id=series&type=type&page=$page",
-            "Filmler" to "$apiUrl/page/catalog?id=movie&type=type&page=$page",
-            "Türkçe Dublaj" to
-                "$apiUrl/page/catalog?id=trdub&type=sound_group&page=$page"
-        )
-
-        for ((title, url) in catalogRequests) {
-            try {
-                val response = app.get(
-                    url,
-                    headers = apiHeaders
-                ).text
-
-                val node = mapper.readTree(response)
-
-                val list = extractPageList(node)
-                val parsed = parseAnimeList(list)
-
-                if (parsed.isNotEmpty()) {
-                    homePageList.add(
-                        HomePageList(
-                            title,
-                            parsed
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-
         return newHomePageResponse(
             list = homePageList,
             hasNext = false
@@ -552,9 +445,6 @@ class AniziumProvider : MainAPI() {
         val tags = ArrayList<String>()
         val episodes = ArrayList<Episode>()
 
-        var year: Int? = null
-        var score: Double? = null
-
         try {
 
             val detailUrl =
@@ -608,25 +498,6 @@ class AniziumProvider : MainAPI() {
                     "overview_short"
                 )
 
-            year =
-                int(
-                    data,
-                    "releaseYear",
-                    "release_year",
-                    "year"
-                )
-
-            score =
-                double(
-                    data,
-                    "imdbPoint",
-                    "imdb_point",
-                    "rating"
-                )
-
-            /*
-             * Genre
-             */
             val genreNode =
                 data.get("genre")
                     ?: data.get("genres")
@@ -647,18 +518,11 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            /*
-             * Anime detayının kendi episode listesi.
-             */
             addEpisodesFromNode(
                 data,
                 episodes
             )
 
-            /*
-             * Eğer detay endpoint'i episode vermediyse
-             * eski plugin'in series endpoint'ini deniyoruz.
-             */
             if (episodes.isEmpty()) {
 
                 val seriesId =
@@ -708,45 +572,6 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            /*
-             * Benzer animeler.
-             */
-            try {
-
-                val similarUrl =
-                    "$apiUrl/anime/similar?id=$cleanAnimeId"
-
-                val similarResponse =
-                    app.get(
-                        similarUrl,
-                        headers = apiHeaders
-                    ).text
-
-                val similarRoot =
-                    mapper.readTree(similarResponse)
-
-                val similarList =
-                    extractPageList(
-                        similarRoot
-                    )
-
-                val recommendations =
-                    parseAnimeList(
-                        similarList
-                    )
-
-                /*
-                 * recommendations CloudStream tarafında
-                 * kullanılabilir ancak zorunlu değil.
-                 */
-                if (recommendations.isNotEmpty()) {
-                    // LoadResponse builder içinde ayrıca atanabilir.
-                }
-
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -760,15 +585,7 @@ class AniziumProvider : MainAPI() {
             posterUrl = poster
             backgroundPosterUrl = banner
             plot = description
-            tags = tags
-
-            if (year != null) {
-                this.year = year
-            }
-
-            if (score != null) {
-                this.score = score
-            }
+            this.tags = tags
 
             addEpisodes(
                 DubStatus.Subbed,
@@ -788,11 +605,6 @@ class AniziumProvider : MainAPI() {
         var season = 1
         var episode = 1
 
-        /*
-         * Yeni format:
-         *
-         * episodeId|season|episode
-         */
         val parts = data.split("|")
 
         if (parts.isNotEmpty()) {
@@ -807,9 +619,6 @@ class AniziumProvider : MainAPI() {
             episode = parts[2].toIntOrNull() ?: 1
         }
 
-        /*
-         * Önce eski çalışan source endpoint formatını deniyoruz.
-         */
         val oldSourceUrl =
             "$apiUrl/anime/source?id=${
                 URLEncoder.encode(
@@ -818,9 +627,6 @@ class AniziumProvider : MainAPI() {
                 )
             }&plan=premium&season=$season&episode=$episode&server="
 
-        /*
-         * Yeni endpoint fallback.
-         */
         val newSourceUrl =
             "$apiUrl/source?id=${
                 URLEncoder.encode(
@@ -831,9 +637,6 @@ class AniziumProvider : MainAPI() {
 
         var found = false
 
-        /*
-         * İlk olarak eski endpoint.
-         */
         try {
 
             val response =
@@ -849,9 +652,6 @@ class AniziumProvider : MainAPI() {
                 root.get("content")
                     ?: root
 
-            /*
-             * Subtitles
-             */
             val subtitles =
                 content.get("subtitles")
                     ?: root.get("subtitles")
@@ -885,9 +685,6 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            /*
-             * groups
-             */
             val groups =
                 content.get("groups")
                     ?: root.get("groups")
@@ -936,9 +733,6 @@ class AniziumProvider : MainAPI() {
                                     "quality"
                                 ) ?: Qualities.Unknown.value
 
-                            val displayName =
-                                "$groupName $linkName".trim()
-
                             val finalUrl =
                                 if (
                                     rawLink.startsWith("http://") ||
@@ -946,18 +740,14 @@ class AniziumProvider : MainAPI() {
                                 ) {
                                     rawLink
                                 } else {
-                                    "$sourceUrl/$rawLink".replace(
-                                        "//",
-                                        "/"
-                                    ).replace(
-                                        "https:/",
-                                        "https://"
-                                    )
+                                    "$sourceUrl/$rawLink"
+                                        .replace("//", "/")
+                                        .replace("https:/", "https://")
                                 }
 
                             offsetCallback.invoke(
                                 newExtractorLink(
-                                    name = displayName,
+                                    name = "$groupName $linkName",
                                     source = this.name,
                                     url = finalUrl,
                                     type = ExtractorLinkType.VIDEO
@@ -974,9 +764,6 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            /*
-             * Eski response doğrudan sourceUrl döndürüyor olabilir.
-             */
             if (!found) {
 
                 val directSource =
@@ -1020,9 +807,6 @@ class AniziumProvider : MainAPI() {
             e.printStackTrace()
         }
 
-        /*
-         * Eski endpoint başarısız olduysa mevcut yeni endpoint.
-         */
         if (!found) {
 
             try {
@@ -1040,9 +824,6 @@ class AniziumProvider : MainAPI() {
                     root.get("content")
                         ?: root
 
-                /*
-                 * Subtitles
-                 */
                 val subtitles =
                     content.get("subtitles")
                         ?: root.get("subtitles")
@@ -1076,9 +857,6 @@ class AniziumProvider : MainAPI() {
                     }
                 }
 
-                /*
-                 * Groups
-                 */
                 val groups =
                     content.get("groups")
                         ?: root.get("groups")
@@ -1127,21 +905,11 @@ class AniziumProvider : MainAPI() {
                                         "linkName"
                                     ) ?: "Server $serverCounter"
 
-                                val finalUrl =
-                                    if (
-                                        rawLink.startsWith("http://") ||
-                                        rawLink.startsWith("https://")
-                                    ) {
-                                        rawLink
-                                    } else {
-                                        fixUrl(rawLink)
-                                    }
-
                                 offsetCallback.invoke(
                                     newExtractorLink(
                                         name = "$groupName $serverName",
                                         source = this.name,
-                                        url = finalUrl,
+                                        url = fixUrl(rawLink),
                                         type = ExtractorLinkType.VIDEO
                                     ) {
                                         referer = "$mainUrl/"
