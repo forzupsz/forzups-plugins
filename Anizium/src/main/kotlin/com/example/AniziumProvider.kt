@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import java.net.URLEncoder
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -72,8 +73,8 @@ class AniziumProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            // Yakaladığımız gerçek arama adresi ve parametresi
-            val searchUrl = "$apiUrl/search?value=$query&page=1"
+            val encodedQuery = URLEncoder.encode(query.lowercase().trim(), "UTF-8")
+            val searchUrl = "$apiUrl/search?value=$encodedQuery&page=1"
             val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
 
             response?.page?.data?.forEach { anime ->
@@ -92,7 +93,6 @@ class AniziumProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // url değişkeni direct animeId olarak geliyor
         val animeId = url
         val detailUrl = "$apiUrl/series/detail/$animeId"
         
