@@ -2,8 +2,6 @@ package com.forzups
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.jsoup.nodes.Document
 
 class OpenAniProvider : MainAPI() {
