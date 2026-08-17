@@ -12,34 +12,66 @@ class AniziumProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<SearchResponse>()
-        val document = app.get(mainUrl).document
         
-        document.select("div.poster-card, div.anime-card, .episodes-list .item, .anime-item").forEach { element ->
-            val title = element.selectFirst(".title, .anime-name, h3, .name")?.text() ?: return@forEach
-            val href = fixUrlNull(element.selectFirst("a")?.attr("href")) ?: return@forEach
-            val posterUrl = fixUrlNull(
-                element.selectFirst("img")?.attr("src") 
-                    ?: element.selectFirst("img")?.attr("data-src")
-            )
+        try {
+            val document = app.get(mainUrl).document
+            
+            // Sitedeki tüm anime kartlarını ve yeni eklenen bölümleri geniş bir kapsayıcıyla tarıyoruz
+            val elements = document.select("a[href*=/anime/], div.anime-card, div.poster, .episodes-list a, article")
 
-            items.add(newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = posterUrl
-            })
+            elements.forEach { element ->
+                val href = fixUrlNull(element.attr("href").ifEmpty { element.selectFirst("a")?.attr("href") }) ?: return@forEach
+                
+                // Başlık çekme
+                val title = element.selectFirst(".title, .name, h2, h3, img")?.attr("alt")
+                    ?: element.selectFirst(".title, .name, h2, h3")?.text()
+                    ?: element.attr("title")
+
+                // Kapak resmi çekme
+                val imgElement = element.selectFirst("img")
+                val posterUrl = fixUrlNull(
+                    imgElement?.attr("data-src")
+                        ?: imgElement?.attr("src")
+                        ?: imgElement?.attr("srcset")?.substringBefore(" ")
+                )
+
+                if (!title.isNullOrBlank() && href.contains("/anime/")) {
+                    items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
+                        this.posterUrl = posterUrl
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
+        // Çift eklenen aynı animeleri temizler
+        val distinctItems = items.distinctBy { it.url }
+
         return newHomePageResponse(
-            list = HomePageList("Son Eklenenler", items),
+            list = HomePageList("Son Eklenenler", distinctItems),
             hasNext = false
         )
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        val title = document.selectFirst("h1, .anime-details .title")?.text() ?: "Bilinmeyen Anime"
-        val poster = fixUrlNull(document.selectFirst(".poster img, .anime-cover img")?.attr("src"))
+        val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
+        val poster = fixUrlNull(document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
+            ?: document.selectFirst("img.poster, .cover img")?.attr("src"))
+
+        val episodes = ArrayList<Episode>()
+        document.select("a[href*=/bolum/], .episode-item a").forEach { ep ->
+            val epHref = fixUrlNull(ep.attr("href")) ?: return@forEach
+            val epName = ep.text().trim().ifEmpty { "Bölüm" }
+            episodes.add(newEpisode(epHref) {
+                this.name = epName
+            })
+        }
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
+            addEpisodes(DubStatus.Subbed, episodes)
         }
     }
 
