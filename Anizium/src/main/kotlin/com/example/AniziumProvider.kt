@@ -16,36 +16,35 @@ class AniziumProvider : MainAPI() {
         try {
             val document = app.get(mainUrl).document
             
-            // Sitedeki tüm anime kartlarını ve yeni eklenen bölümleri geniş bir kapsayıcıyla tarıyoruz
-            val elements = document.select("a[href*=/anime/], div.anime-card, div.poster, .episodes-list a, article")
-
-            elements.forEach { element ->
-                val href = fixUrlNull(element.attr("href").ifEmpty { element.selectFirst("a")?.attr("href") }) ?: return@forEach
+            // Sitedeki tüm bağlantıları kapsayacak geniş tarama
+            document.select("a").forEach { element ->
+                val href = fixUrlNull(element.attr("href")) ?: return@forEach
                 
-                // Başlık çekme
-                val title = element.selectFirst(".title, .name, h2, h3, img")?.attr("alt")
-                    ?: element.selectFirst(".title, .name, h2, h3")?.text()
-                    ?: element.attr("title")
+                // Sadece anime detay veya bölüm sayfalarına giden linkleri yakala
+                if (href.contains("/anime/") || href.contains("/bolum/")) {
+                    val title = element.selectFirst(".title, .name, h2, h3, h4, span")?.text()
+                        ?: element.attr("title")
+                        ?: element.selectFirst("img")?.attr("alt")
+                        ?: element.text()
 
-                // Kapak resmi çekme
-                val imgElement = element.selectFirst("img")
-                val posterUrl = fixUrlNull(
-                    imgElement?.attr("data-src")
-                        ?: imgElement?.attr("src")
-                        ?: imgElement?.attr("srcset")?.substringBefore(" ")
-                )
+                    val imgElement = element.selectFirst("img") ?: element.parent()?.selectFirst("img")
+                    val posterUrl = fixUrlNull(
+                        imgElement?.attr("data-src")
+                            ?: imgElement?.attr("src")
+                            ?: imgElement?.attr("srcset")?.substringBefore(" ")
+                    )
 
-                if (!title.isNullOrBlank() && href.contains("/anime/")) {
-                    items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
-                        this.posterUrl = posterUrl
-                    })
+                    if (!title.isNullOrBlank() && title.length > 2) {
+                        items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
+                            this.posterUrl = posterUrl
+                        })
+                    }
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
-        // Çift eklenen aynı animeleri temizler
         val distinctItems = items.distinctBy { it.url }
 
         return newHomePageResponse(
@@ -56,12 +55,14 @@ class AniziumProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
-        val poster = fixUrlNull(document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
-            ?: document.selectFirst("img.poster, .cover img")?.attr("src"))
+        val title = document.selectFirst("h1, .title, .anime-title")?.text()?.trim() ?: "Anime"
+        val poster = fixUrlNull(
+            document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
+                ?: document.selectFirst("img.poster, .cover img, img")?.attr("src")
+        )
 
         val episodes = ArrayList<Episode>()
-        document.select("a[href*=/bolum/], .episode-item a").forEach { ep ->
+        document.select("a[href*=/bolum/]").forEach { ep ->
             val epHref = fixUrlNull(ep.attr("href")) ?: return@forEach
             val epName = ep.text().trim().ifEmpty { "Bölüm" }
             episodes.add(newEpisode(epHref) {
