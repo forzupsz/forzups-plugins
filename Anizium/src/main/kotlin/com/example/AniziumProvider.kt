@@ -278,17 +278,17 @@ class AniziumProvider : MainAPI() {
                     
                     group.items?.forEach { item ->
                         val streamUrl = item.link ?: return@forEach
-                        val quality = item.quality ?: Qualities.Unknown.value
+                        val qualityVal = item.quality ?: Qualities.Unknown.value
 
                         offsetCallback.invoke(
                             newExtractorLink(
                                 source = this.name,
                                 name = "${this.name} - $groupName",
-                                url = streamUrl,
-                                quality = quality,
-                                isM3u8 = streamUrl.contains(".m3u8")
+                                url = streamUrl
                             ) {
                                 this.referer = "https://anizium.co/"
+                                this.quality = qualityVal
+                                this.isM3u8 = streamUrl.contains(".m3u8")
                             }
                         )
                     }
