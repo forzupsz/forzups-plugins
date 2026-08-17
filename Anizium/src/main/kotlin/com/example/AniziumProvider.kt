@@ -15,11 +15,12 @@ class AniziumProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime)
 
     private val apiHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/javascript, */*; q=0.01",
         "Content-Type" to "application/json",
         "Origin" to "https://anizium.co",
         "Referer" to "https://anizium.co/",
+        "Cf-Control" to "134e1a5e0909175c55080906594e0d040b4440075851560f",
         "Site" to "main",
         "Device" to "browser",
         "Language" to "tr",
