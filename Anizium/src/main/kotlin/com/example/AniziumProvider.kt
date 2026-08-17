@@ -29,7 +29,6 @@ class AniziumProvider : MainAPI() {
         "User-Session" to "null"
     )
 
-    // --- JSON MODEL YAPILARI ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AnimeItem(
@@ -67,7 +66,6 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("data") val data: List<AnimeItem>? = null
     )
 
-    // --- YARDIMCI FONKSİYONLAR ---
 
     private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
@@ -131,7 +129,6 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 1. ANA SAYFA ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val homePageList = ArrayList<HomePageList>()
 
@@ -168,7 +165,6 @@ class AniziumProvider : MainAPI() {
         return newHomePageResponse(list = homePageList, hasNext = false)
     }
 
-    // --- 2. ARAMA ---
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
             val cleanQuery = query.trim().replace(" ", "+")
@@ -181,7 +177,6 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER ---
     override suspend fun load(url: String): LoadResponse {
         val cleanId = url.substringAfterLast("/").substringBefore("?").trim()
         val mainDetailUrl = "$apiUrl/anime/get?id=$cleanId"
@@ -262,7 +257,6 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO VE ALTYAZI LINKLERİ ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -282,12 +276,14 @@ class AniziumProvider : MainAPI() {
             var found = false
             val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
 
-            // 1. ALTYAZILARI ÇEK VE EKLE
             val subtitlesNode = contentNode?.get("subtitles") ?: rootNode.get("subtitles")
             if (subtitlesNode != null && subtitlesNode.isArray) {
                 subtitlesNode.forEach { sub ->
                     val subUrl = sub.get("link")?.asText() ?: sub.get("url")?.asText() ?: return@forEach
-                    val subLang = sub.get("name")?.asText() ?: sub.get("language")?.asText() ?: "Türkçe"
+                    val subLang = sub.get("name")?.asText() 
+                        ?: sub.get("language")?.asText() 
+                        ?: sub.get("label")?.asText() 
+                        ?: "Türkçe"
                     
                     subtitleCallback.invoke(
                         SubtitleFile(
@@ -298,12 +294,12 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // 2. VİDEO KAYNAKLARINI ÇEK ("Japonca", "Türkçe Dublaj" vb. DİL ETİKETİYLE)
             val groupsNode = contentNode?.get("groups") ?: rootNode.get("groups")
             if (groupsNode != null && groupsNode.isArray) {
                 groupsNode.forEach { group ->
-                    val languageGroup = group.get("name")?.asText() 
+                    val dynamicLangName = group.get("name")?.asText() 
                         ?: group.get("title")?.asText() 
+                        ?: group.get("label")?.asText() 
                         ?: "Japonca"
                     
                     val itemsNode = group.get("items")
@@ -316,7 +312,7 @@ class AniziumProvider : MainAPI() {
 
                             offsetCallback.invoke(
                                 newExtractorLink(
-                                    name = "$languageGroup - ${qualityVal}p",
+                                    name = "$dynamicLangName ${qualityVal}p",
                                     source = this.name,
                                     url = streamUrl,
                                     type = ExtractorLinkType.VIDEO
