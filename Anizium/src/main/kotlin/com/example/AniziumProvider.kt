@@ -55,7 +55,7 @@ class AniziumProvider : MainAPI() {
                 val animeId = anime.id ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster)
 
-                items.add(newAnimeSearchResponse(animeName, "$apiUrl/series/detail/$animeId", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
@@ -72,7 +72,8 @@ class AniziumProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            val searchUrl = "$apiUrl/search?q=$query"
+            // Yakaladığımız gerçek arama adresi ve parametresi
+            val searchUrl = "$apiUrl/search?value=$query&page=1"
             val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
 
             response?.page?.data?.forEach { anime ->
@@ -80,7 +81,7 @@ class AniziumProvider : MainAPI() {
                 val animeId = anime.id ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster)
 
-                items.add(newAnimeSearchResponse(animeName, "$apiUrl/series/detail/$animeId", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
@@ -91,32 +92,44 @@ class AniziumProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val jsonText = app.get(url, headers = apiHeaders).text
-        val mapper = mapper
-        val node = mapper.readTree(jsonText)
+        // url değişkeni direct animeId olarak geliyor
+        val animeId = url
+        val detailUrl = "$apiUrl/series/detail/$animeId"
         
-        val dataNode = if (node.has("data")) node.get("data") else node
-        val title = dataNode.get("name")?.asText() ?: "Anime"
-        val poster = fixUrlNull(dataNode.get("poster")?.asText())
-        val description = dataNode.get("overview")?.asText()
-
+        var title = "Anime"
+        var poster: String? = null
+        var description: String? = null
         val episodes = ArrayList<Episode>()
-        val seasonsNode = dataNode.get("seasons")
-        
-        if (seasonsNode != null && seasonsNode.isArray) {
-            seasonsNode.forEach { season ->
-                val episodesNode = season.get("episodes")
-                episodesNode?.forEach { ep ->
-                    val epId = ep.get("ID")?.asText() ?: return@forEach
-                    val epName = ep.get("name")?.asText() ?: "Bölüm"
-                    episodes.add(newEpisode("$apiUrl/episode/detail/$epId") {
-                        this.name = epName
-                    })
+
+        try {
+            val jsonText = app.get(detailUrl, headers = apiHeaders).text
+            val mapper = mapper
+            val node = mapper.readTree(jsonText)
+            
+            val dataNode = if (node.has("data")) node.get("data") else if (node.has("page") && node.get("page").has("data")) node.get("page").get("data") else node
+            
+            title = dataNode.get("name")?.asText() ?: "Anime"
+            poster = fixUrlNull(dataNode.get("poster")?.asText())
+            description = dataNode.get("overview")?.asText()
+
+            val seasonsNode = dataNode.get("seasons")
+            if (seasonsNode != null && seasonsNode.isArray) {
+                seasonsNode.forEach { season ->
+                    val episodesNode = season.get("episodes")
+                    episodesNode?.forEach { ep ->
+                        val epId = ep.get("ID")?.asText() ?: return@forEach
+                        val epName = ep.get("name")?.asText() ?: "Bölüm"
+                        episodes.add(newEpisode(epId) {
+                            this.name = epName
+                        })
+                    }
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
+        return newAnimeLoadResponse(title, animeId, TvType.Anime) {
             this.posterUrl = poster
             this.plot = description
             addEpisodes(DubStatus.Subbed, episodes)
