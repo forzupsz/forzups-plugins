@@ -10,7 +10,7 @@ cloudstream {
     authors = listOf("forzupsz")
     status = 1
     tvTypes = listOf("Anime")
-    requiresResources = true
+    requiresResources = false
     language = "tr"
     iconUrl = "https://anizium.com/favicon.ico"
 }
