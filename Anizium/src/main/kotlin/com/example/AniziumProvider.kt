@@ -4,7 +4,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 
 class AniziumProvider : MainAPI() {
-    override var mainUrl = "https://anizium.com"
+    override var mainUrl = "https://anizium.co"
+    private val catalogUrl = "$mainUrl/animes"
+    
     override var name = "Anizium"
     override val hasMainPage = true
     override var lang = "tr"
@@ -15,12 +17,11 @@ class AniziumProvider : MainAPI() {
         
         try {
             val webView = WebViewResolver()
-            val requestUrl = mainUrl
-            
-            val response = app.get(requestUrl, interceptor = webView)
+            // Doğrudan üyeliksiz /animes kataloğuna bağlanıyoruz
+            val response = app.get(catalogUrl, interceptor = webView)
             val document = response.document
 
-            document.select("a[href*=/anime/], a[href*=/bolum/], .anime-card, article").forEach { element ->
+            document.select("a[href*=/anime/], .anime-card, article, div.poster").forEach { element ->
                 val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
                 val href = fixUrlNull(linkElement?.attr("href")) ?: return@forEach
                 
@@ -46,7 +47,7 @@ class AniziumProvider : MainAPI() {
         }
 
         return newHomePageResponse(
-            list = HomePageList("Son Eklenenler", items.distinctBy { it.url }),
+            list = HomePageList("Tüm Animeler", items.distinctBy { it.url }),
             hasNext = false
         )
     }
@@ -56,11 +57,13 @@ class AniziumProvider : MainAPI() {
         val document = app.get(url, interceptor = webView).document
         
         val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
-        val poster = fixUrlNull(document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
-            ?: document.selectFirst("img.poster, .cover img")?.attr("src"))
+        val poster = fixUrlNull(
+            document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
+                ?: document.selectFirst("img.poster, .cover img, img")?.attr("src")
+        )
 
         val episodes = ArrayList<Episode>()
-        document.select("a[href*=/bolum/]").forEach { ep ->
+        document.select("a[href*=/episode/], a[href*=/bolum/]").forEach { ep ->
             val epHref = fixUrlNull(ep.attr("href")) ?: return@forEach
             val epName = ep.text().trim().ifEmpty { "Bölüm" }
             episodes.add(newEpisode(epHref) {
