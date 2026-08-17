@@ -2,55 +2,54 @@ package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.fasterxml.jackson.annotation.JsonProperty
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
-    private val catalogUrl = "$mainUrl/animes"
+    private val apiUrl = "https://api.anizium.co"
     
     override var name = "Anizium"
     override val hasMainPage = true
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
+    data class ApiResponse(
+        @JsonProperty("data") val data: List<AnimeItem>? = null,
+        @JsonProperty("animes") val animes: List<AnimeItem>? = null
+    )
+
+    data class AnimeItem(
+        @JsonProperty("id") val id: Any? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("slug") val slug: String? = null,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("image") val image: String? = null,
+        @JsonProperty("cover") val cover: String? = null
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<SearchResponse>()
-        
         try {
-            val response = app.get(catalogUrl)
-            val document = response.document
+            val jsonUrl = "$apiUrl/page/top?platform=favorite&page=1"
+            val response = app.get(jsonUrl).parsedSafe<ApiResponse>()
+            val list = response?.data ?: response?.animes
 
-            // Tümü kapsayan alternatif bağlantı ve kart seçicileri
-            document.select("a[href], div[class*=anime], div[class*=item], div[class*=card]").forEach { element ->
-                val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
-                val href = fixUrlNull(linkElement?.attr("href")) ?: return@forEach
-                
-                // Sadece geçerli anime detay linklerini filtrele
-                if (href.contains("/anime/") || href.contains("/watch/") || href.contains("/series/")) {
-                    val title = element.selectFirst("h1, h2, h3, h4, h5, .title, .name, [class*=title], [class*=name]")?.text()
-                        ?: element.attr("title")
-                        ?: linkElement?.text()
-                        ?: ""
+            list?.forEach { anime ->
+                val animeTitle = anime.title ?: anime.name ?: return@forEach
+                val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
+                val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
 
-                    val imgElement = element.selectFirst("img") ?: element.parent()?.selectFirst("img")
-                    val posterUrl = fixUrlNull(
-                        imgElement?.attr("data-src")
-                            ?: imgElement?.attr("src")
-                            ?: imgElement?.attr("srcset")?.substringBefore(" ")
-                    )
-
-                    if (title.isNotBlank() && title.length > 1) {
-                        items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
-                            this.posterUrl = posterUrl
-                        })
-                    }
-                }
+                items.add(newAnimeSearchResponse(animeTitle, "$mainUrl/anime/$animeSlug", TvType.Anime) {
+                    this.posterUrl = posterUrl
+                })
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
         return newHomePageResponse(
-            list = HomePageList("Tüm Animeler", items.distinctBy { it.url }),
+            list = HomePageList("En Favori Animeler", items),
             hasNext = false
         )
     }
@@ -58,28 +57,23 @@ class AniziumProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            val searchUrl = "$mainUrl/animes?search=$query"
-            val document = app.get(searchUrl).document
+            val searchUrl = "$apiUrl/search?q=$query"
+            val response = app.get(searchUrl).parsedSafe<ApiResponse>()
+            val list = response?.data ?: response?.animes
 
-            document.select("a[href*=/anime/], a[href*=/watch/]").forEach { element ->
-                val href = fixUrlNull(element.attr("href")) ?: return@forEach
-                val title = element.selectFirst("h1, h2, h3, h4, .title, .name")?.text()
-                    ?: element.attr("title")
-                    ?: element.text()
+            list?.forEach { anime ->
+                val animeTitle = anime.title ?: anime.name ?: return@forEach
+                val animeSlug = anime.slug ?: anime.id?.toString() ?: return@forEach
+                val posterUrl = fixUrlNull(anime.poster ?: anime.image ?: anime.cover)
 
-                val imgElement = element.selectFirst("img")
-                val posterUrl = fixUrlNull(imgElement?.attr("data-src") ?: imgElement?.attr("src"))
-
-                if (title.isNotBlank()) {
-                    items.add(newAnimeSearchResponse(title.trim(), href, TvType.Anime) {
-                        this.posterUrl = posterUrl
-                    })
-                }
+                items.add(newAnimeSearchResponse(animeTitle, "$mainUrl/anime/$animeSlug", TvType.Anime) {
+                    this.posterUrl = posterUrl
+                })
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return items.distinctBy { it.url }
+        return items
     }
 
     override suspend fun load(url: String): LoadResponse {
