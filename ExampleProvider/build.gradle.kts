@@ -6,6 +6,8 @@ dependencies {
 version = 1
 
 cloudstream {
+    // Eklentinin sistemdeki görünen adı
+    setPluginName("Anizium")
     description = "Anizium CloudStream Eklentisi"
     authors = listOf("forzupsz")
     status = 1
