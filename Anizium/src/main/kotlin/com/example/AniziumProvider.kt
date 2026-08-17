@@ -222,10 +222,8 @@ class AniziumProvider : MainAPI() {
                 ?: dataNode.get("id")?.asText()
                 ?: cleanId
 
-            // 1. AŞAMA: Ana API yanıtında bölümler var mı kontrol et
             parseEpisodesFromNode(dataNode, targetSeriesId, episodesList)
 
-            // 2. AŞAMA: Bölümler henüz bulunamadıysa /series API'sinden çek
             if (episodesList.isEmpty()) {
                 val seriesResText = try {
                     app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
@@ -264,7 +262,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO LINKLERİ ---
+    // --- 4. VİDEO VE ALTYAZI LINKLERİ ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -278,70 +276,59 @@ class AniziumProvider : MainAPI() {
             val episodeNum = parts.getOrNull(2) ?: "1"
 
             val sourceApiUrl = "$apiUrl/source?id=$animeId&site=main&plan=standart&season=$seasonNum&episode=$episodeNum"
-            
+            val resText = app.get(sourceApiUrl, headers = apiHeaders).text
+            val rootNode = mapper.readTree(resText)
+
             var found = false
+            val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
 
-            try {
-                val resText = app.get(sourceApiUrl, headers = apiHeaders).text
-                val rootNode = mapper.readTree(resText)
+            // 1. ALTYAZILARI ÇEK VE EKLE
+            val subtitlesNode = contentNode?.get("subtitles") ?: rootNode.get("subtitles")
+            if (subtitlesNode != null && subtitlesNode.isArray) {
+                subtitlesNode.forEach { sub ->
+                    val subUrl = sub.get("link")?.asText() ?: sub.get("url")?.asText() ?: return@forEach
+                    val subLang = sub.get("name")?.asText() ?: sub.get("language")?.asText() ?: "Türkçe"
+                    
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            lang = subLang,
+                            url = fixUrl(subUrl)
+                        )
+                    )
+                }
+            }
 
-                val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
-                val groupsNode = contentNode?.get("groups")
+            // 2. VİDEO KAYNAKLARINI ÇEK ("Japonca", "Türkçe Dublaj" vb. DİL ETİKETİYLE)
+            val groupsNode = contentNode?.get("groups") ?: rootNode.get("groups")
+            if (groupsNode != null && groupsNode.isArray) {
+                groupsNode.forEach { group ->
+                    val languageGroup = group.get("name")?.asText() 
+                        ?: group.get("title")?.asText() 
+                        ?: "Japonca"
+                    
+                    val itemsNode = group.get("items")
+                    if (itemsNode != null && itemsNode.isArray) {
+                        itemsNode.forEach { item ->
+                            val rawLink = item.get("link")?.asText() ?: return@forEach
+                            val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
 
-                if (groupsNode != null && groupsNode.isArray) {
-                    groupsNode.forEach { group ->
-                        val groupName = group.get("name")?.asText() ?: "Video"
-                        val itemsNode = group.get("items")
+                            val streamUrl = fixUrl(rawLink)
 
-                        if (itemsNode != null && itemsNode.isArray) {
-                            itemsNode.forEach { item ->
-                                val rawLink = item.get("link")?.asText() ?: return@forEach
-                                val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
-
-                                val streamUrl = fixUrl(rawLink)
-
-                                offsetCallback.invoke(
-                                    newExtractorLink(
-                                        name = "${this.name} - $groupName",
-                                        source = this.name,
-                                        url = streamUrl,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = "https://anizium.co/"
-                                        this.quality = qualityVal
-                                    }
-                                )
-                                found = true
-                            }
+                            offsetCallback.invoke(
+                                newExtractorLink(
+                                    name = "$languageGroup - ${qualityVal}p",
+                                    source = this.name,
+                                    url = streamUrl,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = "https://anizium.co/"
+                                    this.quality = qualityVal
+                                }
+                            )
+                            found = true
                         }
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
-            // Eğer API yanıtı boş gelirse, sunduğun CDN yapısına direkt istek at (Yedek Sistem)
-            if (!found) {
-                val qualities = mapOf(
-                    Qualities.P1080.value to "https://f.aniziumserver.sbs/$animeId/$seasonNum/$episodeNum/1080p.original.mp4",
-                    Qualities.P720.value to "https://f.aniziumserver.site/$animeId/$seasonNum/$episodeNum/720p.original.mp4",
-                    Qualities.P480.value to "https://f.aniziumserver.site/$animeId/$seasonNum/$episodeNum/480p.original.mp4"
-                )
-
-                qualities.forEach { (qValue, directUrl) ->
-                    offsetCallback.invoke(
-                        newExtractorLink(
-                            name = "${this.name} - Direct Server",
-                            source = this.name,
-                            url = directUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "https://anizium.co/"
-                            this.quality = qValue
-                        }
-                    )
-                }
-                found = true
             }
 
             found
