@@ -98,14 +98,10 @@ class AniziumProvider : MainAPI() {
                 
                 val epList = seasonObj.get("episodes") ?: seasonObj.get("series") ?: seasonObj.get("data")
                 epList?.forEach { ep ->
-                    val epId = ep.get("id")?.asText() 
-                        ?: ep.get("ID")?.asText() 
-                        ?: ep.get("episode_id")?.asText() 
-                        ?: ""
                     val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                     val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt() ?: 1
 
-                    val linkData = "$targetSeriesId|$seasonNumber|$epNum|$epId"
+                    val linkData = "$targetSeriesId|$seasonNumber|$epNum"
                     episodesList.add(newEpisode(linkData) {
                         this.name = epName
                         this.season = seasonNumber
@@ -117,14 +113,10 @@ class AniziumProvider : MainAPI() {
             val directEpList = containerNode.get("episodes") ?: containerNode.get("series") ?: containerNode.get("data")
             if (directEpList != null && directEpList.isArray) {
                 directEpList.forEach { ep ->
-                    val epId = ep.get("id")?.asText() 
-                        ?: ep.get("ID")?.asText() 
-                        ?: ep.get("episode_id")?.asText() 
-                        ?: ""
                     val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
                     val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt() ?: 1
 
-                    val linkData = "$targetSeriesId|1|$epNum|$epId"
+                    val linkData = "$targetSeriesId|1|$epNum"
                     episodesList.add(newEpisode(linkData) {
                         this.name = epName
                         this.season = 1
@@ -274,79 +266,58 @@ class AniziumProvider : MainAPI() {
             val seriesId = parts.getOrNull(0) ?: data
             val seasonNum = parts.getOrNull(1) ?: "1"
             val episodeNum = parts.getOrNull(2) ?: "1"
-            val episodeId = parts.getOrNull(3) ?: ""
 
-            var found = false
+            try {
+                val sourceApiUrl = "$apiUrl/source?id=$seriesId&site=main&plan=standart&season=$seasonNum&episode=$episodeNum"
+                val resText = app.get(sourceApiUrl, headers = apiHeaders).text
+                val rootNode = mapper.readTree(resText)
+                val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
 
-            val urlsToTry = ArrayList<String>()
-            if (episodeId.isNotEmpty()) {
-                urlsToTry.add("$apiUrl/source?id=$episodeId&site=main&plan=standart")
-            }
-            urlsToTry.add("$apiUrl/source?id=$seriesId&site=main&plan=standart&season=$seasonNum&episode=$episodeNum")
-
-            for (sourceApiUrl in urlsToTry) {
-                if (found) break
-                try {
-                    val resText = app.get(sourceApiUrl, headers = apiHeaders).text
-                    val rootNode = mapper.readTree(resText)
-                    val contentNode = if (rootNode.has("content")) rootNode.get("content") else rootNode
-
-                    val subtitlesNode = contentNode?.get("subtitles") ?: rootNode.get("subtitles")
-                    if (subtitlesNode != null && subtitlesNode.isArray) {
-                        subtitlesNode.forEach { sub ->
-                            val subUrl = sub.get("link")?.asText() ?: sub.get("url")?.asText() ?: return@forEach
-                            val subLang = sub.get("name")?.asText() 
-                                ?: sub.get("language")?.asText() 
-                                ?: sub.get("label")?.asText() 
-                                ?: "Türkçe"
-                            
-                            subtitleCallback.invoke(
-                                SubtitleFile(
-                                    lang = subLang,
-                                    url = fixUrl(subUrl)
-                                )
+                val subtitlesNode = contentNode?.get("subtitles") ?: rootNode.get("subtitles")
+                if (subtitlesNode != null && subtitlesNode.isArray) {
+                    subtitlesNode.forEach { sub ->
+                        val subUrl = sub.get("link")?.asText() ?: sub.get("url")?.asText() ?: return@forEach
+                        val subLang = sub.get("name")?.asText() 
+                            ?: sub.get("language")?.asText() 
+                            ?: sub.get("label")?.asText() 
+                            ?: "Türkçe"
+                        
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                lang = subLang,
+                                url = fixUrl(subUrl)
                             )
-                        }
+                        )
                     }
-
-                    val groupsNode = contentNode?.get("groups") ?: rootNode.get("groups")
-                    if (groupsNode != null && groupsNode.isArray) {
-                        groupsNode.forEach { group ->
-                            val dynamicLangName = group.get("name")?.asText() 
-                                ?: group.get("title")?.asText() 
-                                ?: group.get("label")?.asText() 
-                                ?: "Japonca"
-                            
-                            val itemsNode = group.get("items")
-                            if (itemsNode != null && itemsNode.isArray) {
-                                itemsNode.forEach { item ->
-                                    val rawLink = item.get("link")?.asText() ?: return@forEach
-                                    val qualityVal = item.get("quality")?.asInt() ?: Qualities.Unknown.value
-
-                                    val streamUrl = fixUrl(rawLink)
-
-                                    offsetCallback.invoke(
-                                        newExtractorLink(
-                                            name = "$dynamicLangName ${qualityVal}p",
-                                            source = this.name,
-                                            url = streamUrl,
-                                            type = ExtractorLinkType.VIDEO
-                                        ) {
-                                            this.referer = "https://anizium.co/"
-                                            this.quality = qualityVal
-                                        }
-                                    )
-                                    found = true
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
 
-            found
+            val qualities = listOf(
+                Pair("2160p", Qualities.P2160.value),
+                Pair("1080p", Qualities.P1080.value),
+                Pair("720p", Qualities.P720.value),
+                Pair("480p", Qualities.P480.value)
+            )
+
+            qualities.forEach { (qName, qValue) ->
+                val directMediaUrl = "https://f.aniziumserver.sbs/$seriesId/$seasonNum/$episodeNum/$qName.original.mp4"
+                
+                offsetCallback.invoke(
+                    newExtractorLink(
+                        name = "Japonca $qName",
+                        source = this.name,
+                        url = directMediaUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = "https://anizium.co/"
+                        this.quality = qValue
+                    }
+                )
+            }
+
+            true
         } catch (e: Exception) {
             e.printStackTrace()
             false
