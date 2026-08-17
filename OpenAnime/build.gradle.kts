@@ -6,13 +6,13 @@ dependencies {
 version = 1
 
 cloudstream {
-    description = "Anizium CloudStream Eklentisi"
+    description = "OpenAnime CloudStream Eklentisi"
     authors = listOf("forzupsz")
     status = 1
     tvTypes = listOf("Anime")
     requiresResources = false
     language = "tr"
-    iconUrl = "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/Anizium/icon.png"
+    iconUrl = "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/OpenAnime/icon.png"
 }
 
 android {
