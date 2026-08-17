@@ -14,15 +14,12 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         
         try {
-            // Cloudflare ve JavaScript engelini aşmak için WebViewResolver kullanıyoruz
             val webView = WebViewResolver()
             val requestUrl = mainUrl
             
-            // Sayfayı arka planda tarayıcı gibi tam olarak yüklüyoruz
             val response = app.get(requestUrl, interceptor = webView)
             val document = response.document
 
-            // Sayfadaki anime kartlarını ve linkleri seç
             document.select("a[href*=/anime/], a[href*=/bolum/], .anime-card, article").forEach { element ->
                 val linkElement = if (element.tagName() == "a") element else element.selectFirst("a")
                 val href = fixUrlNull(linkElement?.attr("href")) ?: return@forEach
