@@ -164,7 +164,6 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // Series ID Tespiti
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
@@ -193,7 +192,6 @@ class AniziumProvider : MainAPI() {
                             val epList = season.get("episodes") ?: season.get("series")
                             
                             epList?.forEach { ep ->
-                                // Bölüm ID'sini tüm olası anahtarlardan tara
                                 val epId = ep.get("id")?.asText() 
                                     ?: ep.get("ID")?.asText() 
                                     ?: ep.get("episode_id")?.asText() 
@@ -250,7 +248,6 @@ class AniziumProvider : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // Sitenin gerçek kaynak isteği
             val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart"
             val resText = app.get(sourceApiUrl, headers = apiHeaders).text
             val rootNode = mapper.readTree(resText)
