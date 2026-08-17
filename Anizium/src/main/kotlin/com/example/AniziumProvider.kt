@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import java.net.URLEncoder
 
 class AniziumProvider : MainAPI() {
     override var mainUrl = "https://anizium.co"
@@ -50,10 +49,10 @@ class AniziumProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val homePageList = ArrayList<HomePageList>()
 
-        // 1. En Favori Animeler (Top 100)
+        // Top 100 - limit/per_page parametresi ile daha fazla öge çekme
         try {
             val items = ArrayList<SearchResponse>()
-            val response = app.get("$apiUrl/page/top?platform=favorite&page=1", headers = apiHeaders).parsedSafe<ApiResponse>()
+            val response = app.get("$apiUrl/page/top?platform=favorite&page=1&per_page=50&limit=50", headers = apiHeaders).parsedSafe<ApiResponse>()
             val listData = response?.page?.data ?: response?.data
             listData?.forEach { anime ->
                 val animeName = anime.name ?: anime.title ?: return@forEach
@@ -65,10 +64,10 @@ class AniziumProvider : MainAPI() {
             if (items.isNotEmpty()) homePageList.add(HomePageList("En Favori Animeler (Top 100)", items))
         } catch (e: Exception) { e.printStackTrace() }
 
-        // 2. Son Eklenen Bölümler / Animeler
+        // Son Eklenenler
         try {
             val items = ArrayList<SearchResponse>()
-            val response = app.get("$apiUrl/page/last-added-episodes?page=1", headers = apiHeaders).parsedSafe<ApiResponse>()
+            val response = app.get("$apiUrl/page/last-added-episodes?page=1&per_page=30", headers = apiHeaders).parsedSafe<ApiResponse>()
             val listData = response?.page?.data ?: response?.data
             listData?.forEach { anime ->
                 val animeName = anime.name ?: anime.title ?: return@forEach
@@ -80,32 +79,22 @@ class AniziumProvider : MainAPI() {
             if (items.isNotEmpty()) homePageList.add(HomePageList("Son Eklenenler", items))
         } catch (e: Exception) { e.printStackTrace() }
 
-        // 3. Anime Kataloğu
-        try {
-            val items = ArrayList<SearchResponse>()
-            val response = app.get("$apiUrl/page/catalog?page=1", headers = apiHeaders).parsedSafe<ApiResponse>()
-            val listData = response?.page?.data ?: response?.data
-            listData?.forEach { anime ->
-                val animeName = anime.name ?: anime.title ?: return@forEach
-                val animeId = anime.id ?: return@forEach
-                items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(anime.poster)
-                })
-            }
-            if (items.isNotEmpty()) homePageList.add(HomePageList("Tüm Anime Kataloğu", items))
-        } catch (e: Exception) { e.printStackTrace() }
-
         return newHomePageResponse(list = homePageList, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
-            val searchUrl = "$apiUrl/search?value=$encodedQuery&page=1"
-            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
-            val listData = response?.page?.data ?: response?.data
+            // Çift encoding yapmadan ham sorguyu doğrudan gönderme
+            val cleanQuery = query.trim()
+            var response = app.get("$apiUrl/search?value=$cleanQuery&page=1", headers = apiHeaders).parsedSafe<ApiResponse>()
+            
+            // Eğer value adıyla boş dönerse yedek uç nokta kontrolü
+            if (response?.page?.data.isNullOrEmpty() && response?.data.isNullOrEmpty()) {
+                response = app.get("$apiUrl/search?q=$cleanQuery", headers = apiHeaders).parsedSafe<ApiResponse>()
+            }
 
+            val listData = response?.page?.data ?: response?.data
             listData?.forEach { anime ->
                 val animeName = anime.name ?: anime.title ?: return@forEach
                 val animeId = anime.id ?: return@forEach
@@ -139,7 +128,6 @@ class AniziumProvider : MainAPI() {
             poster = fixUrlNull(dataNode.get("poster")?.asText())
             description = dataNode.get("overview")?.asText()
 
-            // Dizi/Bölüm listesini al
             val seriesNode = dataNode.get("series") ?: dataNode.get("episodes")
             if (seriesNode != null && seriesNode.isArray) {
                 seriesNode.forEach { ep ->
