@@ -15,12 +15,11 @@ class AniziumProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime)
 
     private val apiHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/javascript, */*; q=0.01",
         "Content-Type" to "application/json",
         "Origin" to "https://anizium.co",
         "Referer" to "https://anizium.co/",
-        "Cf-Control" to "134e1a5e0909175c55080906594e0d040b4440075851560f",
         "Site" to "main",
         "Device" to "browser",
         "Language" to "tr",
@@ -66,6 +65,33 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("data") val data: List<AnimeItem>? = null
     )
 
+    // --- VIDEO LOADLINKS JSON MODELLERI ---
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniziumSourceResponse(
+        @JsonProperty("success") val success: Boolean? = null,
+        @JsonProperty("content") val content: AniziumContent? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniziumContent(
+        @JsonProperty("groups") val groups: List<AniziumGroup>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniziumGroup(
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("platform") val platform: String? = null,
+        @JsonProperty("items") val items: List<AniziumItem>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniziumItem(
+        @JsonProperty("quality") val quality: Int? = null,
+        @JsonProperty("link") val link: String? = null,
+        @JsonProperty("type") val type: String? = null
+    )
+
     // --- YARDIMCI FONKSİYONLAR ---
 
     private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
@@ -73,7 +99,6 @@ class AniziumProvider : MainAPI() {
         list?.forEach { anime ->
             val animeName = anime.nameTr ?: anime.name ?: anime.title ?: return@forEach
             val animeId = anime.id ?: anime.slug ?: return@forEach
-            // Tıklanan öğenin doğrudan ID değerini URL parametresi olarak aktarıyoruz
             items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
                 this.posterUrl = fixUrlNull(anime.poster)
             })
@@ -131,11 +156,9 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (URL DÜZELTME HASSASİYETİ EKLENDİ) ---
+    // --- 3. DETAY VE BÖLÜMLER ---
     override suspend fun load(url: String): LoadResponse {
-        // url doğrudan ID veya URL gelse bile içinden ID'yi çeker
         val cleanId = url.substringAfterLast("/").substringBefore("?").trim()
-        
         val mainDetailUrl = "$apiUrl/anime/get?id=$cleanId"
 
         var title = ""
@@ -228,7 +251,6 @@ class AniziumProvider : MainAPI() {
             e.printStackTrace()
         }
 
-        // Title ve URL eşleştirmesi güncellendi
         return newAnimeLoadResponse(if (title.isEmpty()) "Anime" else title, "$mainUrl/anime/$cleanId", TvType.Anime) {
             this.posterUrl = poster
             this.backgroundPosterUrl = bannerUrl
@@ -245,6 +267,38 @@ class AniziumProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
-        return false
+        return try {
+            val sourceApiUrl = "$apiUrl/source?id=$data&site=main&plan=standart&season=1&episode=1"
+            
+            val response = app.get(sourceApiUrl, headers = apiHeaders).parsedSafe<AniziumSourceResponse>()
+
+            if (response?.success == true && response.content?.groups != null) {
+                for (group in response.content.groups) {
+                    val groupName = group.name ?: "Video"
+                    
+                    group.items?.forEach { item ->
+                        val streamUrl = item.link ?: return@forEach
+                        val quality = item.quality ?: Qualities.Unknown.value
+
+                        offsetCallback.invoke(
+                            ExtractorLink(
+                                source = this.name,
+                                name = "${this.name} - $groupName",
+                                url = streamUrl,
+                                referer = "https://anizium.co/",
+                                quality = quality,
+                                isM3u8 = streamUrl.contains(".m3u8")
+                            )
+                        )
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 }
