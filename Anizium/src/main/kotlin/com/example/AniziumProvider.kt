@@ -17,7 +17,6 @@ class AniziumProvider : MainAPI() {
         
         try {
             val webView = WebViewResolver()
-            // Doğrudan üyeliksiz /animes kataloğuna bağlanıyoruz
             val response = app.get(catalogUrl, interceptor = webView)
             val document = response.document
 
