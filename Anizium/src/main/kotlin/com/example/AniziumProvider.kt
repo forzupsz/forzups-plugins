@@ -130,11 +130,11 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (get?id VE series?id BİRLEŞTİRİLDİ) ---
+    // --- 3. DETAY VE BÖLÜMLER (EKRAN GÖRÜNTÜLERİNE GÖRE TAM DÜZELTİLDİ) ---
     override suspend fun load(url: String): LoadResponse {
         val animeId = url.trim()
         
-        // 1. Künye bilgileri isteği
+        // 1. Künye Bilgisi İsteği
         val mainDetailUrl = "$apiUrl/anime/get?id=$animeId"
 
         var title = "Anime"
@@ -156,7 +156,7 @@ class AniziumProvider : MainAPI() {
                 ?: "Anime"
 
             poster = fixUrlNull(dataNode.get("poster")?.asText() ?: dataNode.get("mobile_poster_link")?.asText())
-            bannerUrl = fixUrlNull(dataNode.get("banner_link")?.asText() ?: dataNode.get("details_banner")?.asText())
+            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner")?.asText())
             description = dataNode.get("overview")?.asText() ?: dataNode.get("overview_short")?.asText()
 
             val genreNode = dataNode.get("genre") ?: dataNode.get("genres")
@@ -167,54 +167,62 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // Künyeden series_id geliyorsa onu al, yoksa tıkladığımız id'yi kullan
+            // `series_id` çekme
             val targetSeriesId = dataNode.get("series_id")?.asText() 
+                ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
                 ?: animeId
 
-            // B) Bölüm Bilgilerini Çekme (/series?id=...)
+            // B) Bölüm ve Sezon Bilgilerini Çekme (/anime/series?id=...)
             val seriesResText = try {
-                app.get("$apiUrl/series?id=$targetSeriesId", headers = apiHeaders).text
+                app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
             } catch (e: Exception) {
-                mainResText 
+                mainResText
             }
 
             val seriesNode = mapper.readTree(seriesResText)
-            val seriesDataNode = if (seriesNode.has("data") && !seriesNode.get("data").isNull) seriesNode.get("data") else seriesNode
-
-            // Sezon dizisinden bölümleri çekme
-            val seasonsNode = seriesDataNode.get("seasons") ?: dataNode.get("seasons")
-            if (seasonsNode != null && seasonsNode.isArray) {
-                seasonsNode.forEach { season ->
-                    val seasonNumber = season.get("number")?.asInt() ?: season.get("season_number")?.asInt() ?: 1
-                    val epList = season.get("episodes") ?: season.get("series")
-                    
-                    epList?.forEach { ep ->
-                        val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
-                        val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                        val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
-
-                        episodesList.add(newEpisode(epId) {
-                            this.name = epName
-                            this.season = seasonNumber
-                            this.episode = epNum
-                        })
-                    }
-                }
+            
+            // image_1610c4.png görselindeki gibi 'data' dizisini (Array) yakalama
+            val seriesDataArray = when {
+                seriesNode.has("data") && seriesNode.get("data").isArray -> seriesNode.get("data")
+                seriesNode.isArray -> seriesNode
+                else -> null
             }
 
-            // Sezon dizisi yoksa direkt bölüm listesine bakma
-            if (episodesList.isEmpty()) {
-                val directEpList = seriesDataNode.get("episodes") ?: seriesDataNode.get("series") ?: dataNode.get("episodes")
-                directEpList?.forEach { ep ->
-                    val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
-                    val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
-                    val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
+            if (seriesDataArray != null && seriesDataArray.isArray) {
+                seriesDataArray.forEach { animeSeriesObj ->
+                    val seasonsNode = animeSeriesObj.get("seasons")
+                    if (seasonsNode != null && seasonsNode.isArray) {
+                        seasonsNode.forEach { season ->
+                            val seasonNumber = season.get("number")?.asInt() ?: season.get("season_number")?.asInt() ?: 1
+                            val epList = season.get("episodes") ?: season.get("series")
+                            
+                            epList?.forEach { ep ->
+                                val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                                val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                                val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
 
-                    episodesList.add(newEpisode(epId) {
-                        this.name = epName
-                        this.episode = epNum
-                    })
+                                episodesList.add(newEpisode(epId) {
+                                    this.name = epName
+                                    this.season = seasonNumber
+                                    this.episode = epNum
+                                })
+                            }
+                        }
+                    } else {
+                        // Sezon mantığı yoksa doğrudan episodes veya series dizisine bak
+                        val directEpList = animeSeriesObj.get("episodes") ?: animeSeriesObj.get("series")
+                        directEpList?.forEach { ep ->
+                            val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                            val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                            val epNum = ep.get("number")?.asInt() ?: ep.get("episode_number")?.asInt()
+
+                            episodesList.add(newEpisode(epId) {
+                                this.name = epName
+                                this.episode = epNum
+                            })
+                        }
+                    }
                 }
             }
 
@@ -231,15 +239,13 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO LINKLERI (SADECE BÖLÜM SAYFASINA TIKLAYINCA ÇALIŞACAK) ---
+    // --- 4. VİDEO LINKLERİ ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Video API'sini henüz yakalamadığımız için şimdilik boş dönüyoruz.
-        // Web sitesinde bir bölüme tıklandığında Network sekmesine düşen isteğe göre burayı yazacağız.
         return false
     }
 }
