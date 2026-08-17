@@ -41,7 +41,7 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("ID") val id: String? = null,
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("poster") val poster: String? = null,
-        @JsonProperty("type") val type: String? = null
+        @JsonProperty("overview") val overview: String? = null
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -55,7 +55,7 @@ class AniziumProvider : MainAPI() {
                 val animeId = anime.id ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster)
 
-                items.add(newAnimeSearchResponse(animeName, "$mainUrl/anime/$animeId", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, "$apiUrl/series/detail/$animeId", TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
@@ -80,7 +80,7 @@ class AniziumProvider : MainAPI() {
                 val animeId = anime.id ?: return@forEach
                 val posterUrl = fixUrlNull(anime.poster)
 
-                items.add(newAnimeSearchResponse(animeName, "$mainUrl/anime/$animeId", TvType.Anime) {
+                items.add(newAnimeSearchResponse(animeName, "$apiUrl/series/detail/$animeId", TvType.Anime) {
                     this.posterUrl = posterUrl
                 })
             }
@@ -91,25 +91,34 @@ class AniziumProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, headers = apiHeaders).document
+        val jsonText = app.get(url, headers = apiHeaders).text
+        val mapper = mapper
+        val node = mapper.readTree(jsonText)
         
-        val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
-        val poster = fixUrlNull(
-            document.selectFirst("img.poster, .cover img, meta[property=og:image]")?.attr("content")
-                ?: document.selectFirst("img.poster, .cover img, img")?.attr("src")
-        )
+        val dataNode = if (node.has("data")) node.get("data") else node
+        val title = dataNode.get("name")?.asText() ?: "Anime"
+        val poster = fixUrlNull(dataNode.get("poster")?.asText())
+        val description = dataNode.get("overview")?.asText()
 
         val episodes = ArrayList<Episode>()
-        document.select("a[href*=/episode/], a[href*=/bolum/], a[href*=/watch/]").forEach { ep ->
-            val epHref = fixUrlNull(ep.attr("href")) ?: return@forEach
-            val epName = ep.text().trim().ifEmpty { "Bölüm" }
-            episodes.add(newEpisode(epHref) {
-                this.name = epName
-            })
+        val seasonsNode = dataNode.get("seasons")
+        
+        if (seasonsNode != null && seasonsNode.isArray) {
+            seasonsNode.forEach { season ->
+                val episodesNode = season.get("episodes")
+                episodesNode?.forEach { ep ->
+                    val epId = ep.get("ID")?.asText() ?: return@forEach
+                    val epName = ep.get("name")?.asText() ?: "Bölüm"
+                    episodes.add(newEpisode("$apiUrl/episode/detail/$epId") {
+                        this.name = epName
+                    })
+                }
+            }
         }
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
+            this.plot = description
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
