@@ -32,7 +32,14 @@ class AniziumProvider : MainAPI() {
     data class HomeApiResponse(
         @JsonProperty("settlement_top") val settlementTop: List<AnimeItem>? = null,
         @JsonProperty("settlement_middle") val settlementMiddle: List<AnimeItem>? = null,
-        @JsonProperty("settlement_lower") val settlementLower: List<AnimeItem>? = null
+        @JsonProperty("settlement_lower") val settlementLower: List<AnimeItem>? = null,
+        @JsonProperty("special_list") val specialList: List<SpecialItem>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SpecialItem(
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("data") val data: List<AnimeItem>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -59,41 +66,28 @@ class AniziumProvider : MainAPI() {
         val homePageList = ArrayList<HomePageList>()
 
         try {
-            // Gerçek Ana Sayfa Endpoint'i: /page/home
             val response = app.get("$apiUrl/page/home", headers = apiHeaders).parsedSafe<HomeApiResponse>()
 
-            // 1. Öne Çıkanlar (Vitrin)
-            val topItems = ArrayList<SearchResponse>()
-            response?.settlementTop?.forEach { anime ->
-                val animeName = anime.name ?: anime.title ?: return@forEach
-                val animeId = anime.id ?: return@forEach
-                topItems.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(anime.poster)
-                })
-            }
+            // 1. Vitrin / Öne Çıkanlar
+            val topItems = response?.settlementTop?.toSearchResponses() ?: emptyList()
             if (topItems.isNotEmpty()) homePageList.add(HomePageList("Öne Çıkan Animeler", topItems))
 
             // 2. Haftanın En Çok İzlenenleri
-            val middleItems = ArrayList<SearchResponse>()
-            response?.settlementMiddle?.forEach { anime ->
-                val animeName = anime.name ?: anime.title ?: return@forEach
-                val animeId = anime.id ?: return@forEach
-                middleItems.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(anime.poster)
-                })
-            }
+            val middleItems = response?.settlementMiddle?.toSearchResponses() ?: emptyList()
             if (middleItems.isNotEmpty()) homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middleItems))
 
-            // 3. Türkçe Dublajlı ve Popüler Animeler
-            val lowerItems = ArrayList<SearchResponse>()
-            response?.settlementLower?.forEach { anime ->
-                val animeName = anime.name ?: anime.title ?: return@forEach
-                val animeId = anime.id ?: return@forEach
-                lowerItems.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(anime.poster)
-                })
+            // 3. Görselde Yakaladığımız 'special_list' İçindeki Tüm Özel Kategoriler (İsekai, Dublaj, vb.)
+            response?.specialList?.forEach { category ->
+                val categoryName = category.name ?: return@forEach
+                val animeList = category.data?.toSearchResponses() ?: emptyList()
+                if (animeList.isNotEmpty()) {
+                    homePageList.add(HomePageList(categoryName, animeList))
+                }
             }
-            if (lowerItems.isNotEmpty()) homePageList.add(HomePageList("Türkçe Dublajlı ve Önerilenler", lowerItems))
+
+            // 4. Alt Liste
+            val lowerItems = response?.settlementLower?.toSearchResponses() ?: emptyList()
+            if (lowerItems.isNotEmpty()) homePageList.add(HomePageList("Önerilen Animeler", lowerItems))
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -102,22 +96,27 @@ class AniziumProvider : MainAPI() {
         return newHomePageResponse(list = homePageList, hasNext = false)
     }
 
+    private fun List<AnimeItem>.toSearchResponses(): List<SearchResponse> {
+        val items = ArrayList<SearchResponse>()
+        this.forEach { anime ->
+            val animeName = anime.name ?: anime.title ?: return@forEach
+            val animeId = anime.id ?: return@forEach
+            items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
+                this.posterUrl = fixUrlNull(anime.poster)
+            })
+        }
+        return items
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         val items = ArrayList<SearchResponse>()
         try {
-            // Doğrulanan Arama Adresi: /page/search?value=...&page=1
             val cleanQuery = query.trim().replace(" ", "+")
             val searchUrl = "$apiUrl/page/search?value=$cleanQuery&page=1"
             val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<SearchApiResponse>()
             val listData = response?.page?.data ?: response?.data
 
-            listData?.forEach { anime ->
-                val animeName = anime.name ?: anime.title ?: return@forEach
-                val animeId = anime.id ?: return@forEach
-                items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(anime.poster)
-                })
-            }
+            items.addAll(listData?.toSearchResponses() ?: emptyList())
         } catch (e: Exception) {
             e.printStackTrace()
         }
