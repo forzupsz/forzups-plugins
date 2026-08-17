@@ -12,7 +12,7 @@ cloudstream {
     tvTypes = listOf("Anime")
     requiresResources = false
     language = "tr"
-    iconUrl = "https://anizium.com/favicon.ico"
+    iconUrl = "https://raw.githubusercontent.com/forzupsz/forzups-plugins/master/Anizium/icon.png"
 }
 
 android {
