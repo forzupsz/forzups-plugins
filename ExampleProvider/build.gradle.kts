@@ -6,8 +6,6 @@ dependencies {
 version = 1
 
 cloudstream {
-    // Eklenti adını doğrudan burada zorluyoruz:
-    name = "Anizium"
     description = "Anizium CloudStream Eklentisi"
     authors = listOf("forzupsz")
     status = 1
