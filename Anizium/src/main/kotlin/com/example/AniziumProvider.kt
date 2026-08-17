@@ -94,7 +94,8 @@ class AniziumProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val animeId = url
-        val detailUrl = "$apiUrl/series/detail/$animeId"
+        // Kesinleştirdiğimiz gerçek detay API adresi
+        val detailUrl = "$apiUrl/anime/get?id=$animeId"
         
         var title = "Anime"
         var poster: String? = null
@@ -106,12 +107,13 @@ class AniziumProvider : MainAPI() {
             val mapper = mapper
             val node = mapper.readTree(jsonText)
             
-            val dataNode = if (node.has("data")) node.get("data") else if (node.has("page") && node.get("page").has("data")) node.get("page").get("data") else node
+            val dataNode = if (node.has("data")) node.get("data") else node
             
             title = dataNode.get("name")?.asText() ?: "Anime"
             poster = fixUrlNull(dataNode.get("poster")?.asText())
             description = dataNode.get("overview")?.asText()
 
+            // Sezon veya doğrudan bölüm listesini tara
             val seasonsNode = dataNode.get("seasons")
             if (seasonsNode != null && seasonsNode.isArray) {
                 seasonsNode.forEach { season ->
@@ -123,6 +125,15 @@ class AniziumProvider : MainAPI() {
                             this.name = epName
                         })
                     }
+                }
+            } else {
+                val episodesNode = dataNode.get("episodes")
+                episodesNode?.forEach { ep ->
+                    val epId = ep.get("ID")?.asText() ?: return@forEach
+                    val epName = ep.get("name")?.asText() ?: "Bölüm"
+                    episodes.add(newEpisode(epId) {
+                        this.name = epName
+                    })
                 }
             }
         } catch (e: Exception) {
