@@ -280,17 +280,16 @@ class AniziumProvider : MainAPI() {
                         val streamUrl = item.link ?: return@forEach
                         val qualityVal = item.quality ?: Qualities.Unknown.value
 
-                        offsetCallback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} - $groupName",
-                                url = streamUrl
-                            ) {
-                                this.referer = "https://anizium.co/"
-                                this.quality = qualityVal
-                                this.isM3u8 = streamUrl.contains(".m3u8")
-                            }
-                        )
+                        val extractorLink = ExtractorLinkBuilder()
+                            .setSource(this.name)
+                            .setName("${this.name} - $groupName")
+                            .setUrl(streamUrl)
+                            .setReferer("https://anizium.co/")
+                            .setQuality(qualityVal)
+                            .setIsM3u8(streamUrl.contains(".m3u8"))
+                            .build()
+
+                        offsetCallback.invoke(extractorLink)
                     }
                 }
                 true
