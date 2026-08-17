@@ -13,6 +13,19 @@ class AniziumProvider : MainAPI() {
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
+    // Sitenin doğrulama başlıkları
+    private val apiHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Accept" to "application/json, text/javascript, */*; q=0.01",
+        "Content-Type" to "application/json",
+        "Origin" to "https://anizium.co",
+        "Referer" to "https://anizium.co/",
+        "cf-control" to "134e08135d45075c55080906594e0d0400424c055f55560f",
+        "site" to "main",
+        "device" to "browser",
+        "language" to "tr"
+    )
+
     data class ApiResponse(
         @JsonProperty("data") val data: List<AnimeItem>? = null,
         @JsonProperty("animes") val animes: List<AnimeItem>? = null
@@ -32,7 +45,7 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         try {
             val jsonUrl = "$apiUrl/page/top?platform=favorite&page=1"
-            val response = app.get(jsonUrl).parsedSafe<ApiResponse>()
+            val response = app.get(jsonUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
             val list = response?.data ?: response?.animes
 
             list?.forEach { anime ->
@@ -58,7 +71,7 @@ class AniziumProvider : MainAPI() {
         val items = ArrayList<SearchResponse>()
         try {
             val searchUrl = "$apiUrl/search?q=$query"
-            val response = app.get(searchUrl).parsedSafe<ApiResponse>()
+            val response = app.get(searchUrl, headers = apiHeaders).parsedSafe<ApiResponse>()
             val list = response?.data ?: response?.animes
 
             list?.forEach { anime ->
@@ -77,7 +90,7 @@ class AniziumProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        val document = app.get(url, headers = apiHeaders).document
         
         val title = document.selectFirst("h1, .title")?.text()?.trim() ?: "Anime"
         val poster = fixUrlNull(
