@@ -130,11 +130,11 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (BİRLEŞTİRİLMİŞ ÇİFT ENDPOINT MANTIĞI) ---
+    // --- 3. DETAY VE BÖLÜMLER (get?id VE series?id BİRLEŞTİRİLDİ) ---
     override suspend fun load(url: String): LoadResponse {
         val animeId = url.trim()
         
-        // 1. İSTEK: Künye Bilgileri için
+        // 1. Künye bilgileri isteği
         val mainDetailUrl = "$apiUrl/anime/get?id=$animeId"
 
         var title = "Anime"
@@ -145,7 +145,7 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            // A) Künye Bilgilerini Çekiyoruz (/anime/get)
+            // A) Künye Bilgilerini Çekme (/anime/get)
             val mainResText = app.get(mainDetailUrl, headers = apiHeaders).text
             val mainNode = mapper.readTree(mainResText)
             val dataNode = if (mainNode.has("data") && !mainNode.get("data").isNull) mainNode.get("data") else mainNode
@@ -167,23 +167,22 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // Eğer künye içerisinde farklı bir `series_id` varsa onu yakala, yoksa gelen ID ile devam et
+            // Künyeden series_id geliyorsa onu al, yoksa tıkladığımız id'yi kullan
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
                 ?: animeId
 
-            // B) Bölüm ve Sezon Bilgilerini Çekiyoruz (/series?id=...)
+            // B) Bölüm Bilgilerini Çekme (/series?id=...)
             val seriesResText = try {
                 app.get("$apiUrl/series?id=$targetSeriesId", headers = apiHeaders).text
             } catch (e: Exception) {
-                // Eğer /series çağrısı patlarsa ana yanıttaki veriyi kullanmaya çalış
                 mainResText 
             }
 
             val seriesNode = mapper.readTree(seriesResText)
             val seriesDataNode = if (seriesNode.has("data") && !seriesNode.get("data").isNull) seriesNode.get("data") else seriesNode
 
-            // Sezon dizisinden bölümleri ayıklama
+            // Sezon dizisinden bölümleri çekme
             val seasonsNode = seriesDataNode.get("seasons") ?: dataNode.get("seasons")
             if (seasonsNode != null && seasonsNode.isArray) {
                 seasonsNode.forEach { season ->
@@ -204,7 +203,7 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // Sezon objesi yoksa doğrudan bölüm dizisini ayıklama
+            // Sezon dizisi yoksa direkt bölüm listesine bakma
             if (episodesList.isEmpty()) {
                 val directEpList = seriesDataNode.get("episodes") ?: seriesDataNode.get("series") ?: dataNode.get("episodes")
                 directEpList?.forEach { ep ->
@@ -232,41 +231,15 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO LINKLERININ YÜKLENMESI ---
+    // --- 4. VİDEO LINKLERI (SADECE BÖLÜM SAYFASINA TIKLAYINCA ÇALIŞACAK) ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val episodeApiUrl = "$apiUrl/episode/get?id=$data"
-            val jsonText = app.get(episodeApiUrl, headers = apiHeaders).text
-            val node = mapper.readTree(jsonText)
-            val dataNode = if (node.has("data") && !node.get("data").isNull) node.get("data") else node
-
-            val videoUrl = dataNode.get("video")?.asText() 
-                ?: dataNode.get("file")?.asText() 
-                ?: dataNode.get("stream_url")?.asText() 
-                ?: return false
-
-            val isM3u8 = videoUrl.contains(".m3u8")
-
-            offsetCallback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = videoUrl,
-                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                }
-            )
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+        // Video API'sini henüz yakalamadığımız için şimdilik boş dönüyoruz.
+        // Web sitesinde bir bölüme tıklandığında Network sekmesine düşen isteğe göre burayı yazacağız.
+        return false
     }
 }
