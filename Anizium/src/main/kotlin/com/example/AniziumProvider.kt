@@ -28,24 +28,7 @@ class AniziumProvider : MainAPI() {
         "User-Session" to "null"
     )
 
-    // --- JSON MODEL YAPILARI ---
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class EpisodeItem(
-        @JsonProperty("ID") val id: String? = null,
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("number") val number: Int? = null,
-        @JsonProperty("video") val video: String? = null,
-        @JsonProperty("file") val file: String? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SeasonItem(
-        @JsonProperty("ID") val id: String? = null,
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("number") val number: Int? = null,
-        @JsonProperty("episodes") val episodes: List<EpisodeItem>? = null
-    )
+    // --- JSON MODEL YAPILARI (Ana Sayfa ve Arama İçin) ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class GenreItem(
@@ -59,19 +42,7 @@ class AniziumProvider : MainAPI() {
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("name_tr") val nameTr: String? = null,
         @JsonProperty("title") val title: String? = null,
-        @JsonProperty("poster") val poster: String? = null,
-        @JsonProperty("banner") val banner: String? = null,
-        @JsonProperty("details_banner") val detailsBanner: String? = null,
-        @JsonProperty("overview") val overview: String? = null,
-        @JsonProperty("overview_short") val overviewShort: String? = null,
-        @JsonProperty("genre") val genre: List<GenreItem>? = null,
-        @JsonProperty("seasons") val seasons: List<SeasonItem>? = null,
-        @JsonProperty("episodes") val episodes: List<EpisodeItem>? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class DetailApiResponse(
-        @JsonProperty("data") val data: AnimeItem? = null
+        @JsonProperty("poster") val poster: String? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -163,7 +134,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER ---
+    // --- 3. DETAY VE BÖLÜMLER (GARANTİ MANTIĞA GEÇİLDİ) ---
     override suspend fun load(url: String): LoadResponse {
         val animeId = url
         val detailUrl = "$apiUrl/anime/get?id=$animeId"
@@ -176,27 +147,45 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            val res = app.get(detailUrl, headers = apiHeaders).parsedSafe<DetailApiResponse>()
-            val anime = res?.data
+            val jsonText = app.get(detailUrl, headers = apiHeaders).text
+            val node = mapper.readTree(jsonText)
+            
+            val dataNode = if (node.has("data")) node.get("data") else node
 
-            if (anime != null) {
-                title = anime.nameTr ?: anime.name ?: anime.title ?: "Anime"
-                poster = fixUrlNull(anime.poster)
-                bannerUrl = fixUrlNull(anime.detailsBanner ?: anime.banner)
-                description = anime.overview ?: anime.overviewShort
+            // 1. İsim
+            title = dataNode.get("name_tr")?.asText() 
+                ?: dataNode.get("name")?.asText() 
+                ?: dataNode.get("title")?.asText() 
+                ?: "Anime"
 
-                anime.genre?.forEach { g ->
-                    g.name?.let { genreTags.add(it) }
+            // 2. Poster ve Banner (Afis / Kapak)
+            poster = fixUrlNull(dataNode.get("poster")?.asText() ?: dataNode.get("mobile_poster_link")?.asText())
+            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner")?.asText())
+
+            // 3. Konu / Aciklama
+            description = dataNode.get("overview")?.asText() ?: dataNode.get("overview_short")?.asText()
+
+            // 4. Turler (Genres)
+            val genreNode = dataNode.get("genre")
+            if (genreNode != null && genreNode.isArray) {
+                genreNode.forEach { g ->
+                    val gName = g.get("name")?.asText()
+                    if (!gName.isNullOrEmpty()) genreTags.add(gName)
                 }
+            }
 
-                anime.seasons?.forEach { season ->
-                    val seasonNumber = season.number ?: 1
+            // 5. Sezonlar ve Bolumler Parsing
+            val seasonsNode = dataNode.get("seasons")
+            if (seasonsNode != null && seasonsNode.isArray) {
+                seasonsNode.forEach { season ->
+                    val seasonNumber = season.get("number")?.asInt() ?: 1
+                    val epList = season.get("episodes") ?: season.get("series")
                     
-                    season.episodes?.forEach { ep ->
-                        val epId = ep.id ?: return@forEach
-                        val epName = ep.name ?: "Bölüm"
-                        val epNum = ep.number
-                        val videoData = ep.video ?: ep.file ?: epId
+                    epList?.forEach { ep ->
+                        val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                        val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                        val epNum = ep.get("number")?.asInt()
+                        val videoData = ep.get("video")?.asText() ?: ep.get("file")?.asText() ?: epId
 
                         episodesList.add(newEpisode(videoData) {
                             this.name = epName
@@ -205,20 +194,24 @@ class AniziumProvider : MainAPI() {
                         })
                     }
                 }
+            }
 
-                if (episodesList.isEmpty()) {
-                    anime.episodes?.forEach { ep ->
-                        val epId = ep.id ?: return@forEach
-                        val epName = ep.name ?: "Bölüm"
-                        val videoData = ep.video ?: ep.file ?: epId
+            // Eğer 'seasons' yoksa düz 'episodes' dizisine bak
+            if (episodesList.isEmpty()) {
+                val directEpList = dataNode.get("episodes") ?: dataNode.get("series")
+                directEpList?.forEach { ep ->
+                    val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
+                    val epName = ep.get("name")?.asText() ?: ep.get("title")?.asText() ?: "Bölüm"
+                    val epNum = ep.get("number")?.asInt()
+                    val videoData = ep.get("video")?.asText() ?: ep.get("file")?.asText() ?: epId
 
-                        episodesList.add(newEpisode(videoData) {
-                            this.name = epName
-                            this.episode = ep.number
-                        })
-                    }
+                    episodesList.add(newEpisode(videoData) {
+                        this.name = epName
+                        this.episode = epNum
+                    })
                 }
             }
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -232,7 +225,7 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 4. VİDEO OYNATICI (GÜNCELLENDİ: newExtractorLink KULLANILDI) ---
+    // --- 4. VİDEO OYNATICI ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
