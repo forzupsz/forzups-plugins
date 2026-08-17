@@ -4,21 +4,55 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 
 class AniziumProvider : MainAPI() {
-    override var mainUrl = "https://anizium.com" // Sitenin güncel adresi (değiştiyse burayı güncelle)
+    override var mainUrl = "https://anizium.com"
     override var name = "Anizium"
     override val hasMainPage = true
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Anime)
 
-    // 1. ADIM: Ana sayfadaki son eklenen animeleri çekme
+    // 1. ANA SAYFA: Son eklenen animeleri site HTML'inden çeker
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<SearchResponse>()
         
-        // Siteye istek atıp kaynak kodlarını (HTML) alıyoruz
         val document = app.get(mainUrl).document
         
-        // JSoup ile HTML içinden animeleri seçeceğimiz kodlar buraya gelecek
-        
-        return newHomePageResponse(request.name, items)
+        document.select("div.poster-card, div.anime-card, .episodes-list .item, .anime-item").forEach { element ->
+            val title = element.selectFirst(".title, .anime-name, h3, .name")?.text() ?: return@forEach
+            val href = fixUrlNull(element.selectFirst("a")?.attr("href")) ?: return@forEach
+            val posterUrl = fixUrlNull(
+                element.selectFirst("img")?.attr("src") 
+                    ?: element.selectFirst("img")?.attr("data-src")
+            )
+
+            items.add(newAnimeSearchResponse(title, href, TvType.Anime) {
+                this.posterUrl = posterUrl
+            })
+        }
+
+        return newHomePageResponse(
+            listOf(HomePageList("Son Eklenenler", items)),
+            hasMore = false
+        )
+    }
+
+    // 2. DETAY SAYFASI: Animenin detaylarını ve bölümlerini yükler (Şimdilik taslak)
+    override suspend fun load(url: String): LoadResponse {
+        val document = app.get(url).document
+        val title = document.selectFirst("h1, .anime-details .title")?.text() ?: "Bilinmeyen Anime"
+        val poster = fixUrlNull(document.selectFirst(".poster img, .anime-cover img")?.attr("src"))
+
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
+            this.posterUrl = poster
+        }
+    }
+
+    // 3. VİDEO LİNKLERİ: Bölüm videolarını çözer (Şimdilik taslak)
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        offsetCallback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return true
     }
 }
