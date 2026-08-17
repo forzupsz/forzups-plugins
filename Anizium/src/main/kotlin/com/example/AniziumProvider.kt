@@ -73,6 +73,7 @@ class AniziumProvider : MainAPI() {
         list?.forEach { anime ->
             val animeName = anime.nameTr ?: anime.name ?: anime.title ?: return@forEach
             val animeId = anime.id ?: anime.slug ?: return@forEach
+            // Tıklanan öğenin doğrudan ID değerini URL parametresi olarak aktarıyoruz
             items.add(newAnimeSearchResponse(animeName, animeId, TvType.Anime) {
                 this.posterUrl = fixUrlNull(anime.poster)
             })
@@ -130,14 +131,14 @@ class AniziumProvider : MainAPI() {
         }
     }
 
-    // --- 3. DETAY VE BÖLÜMLER (EKRAN GÖRÜNTÜLERİNE GÖRE TAM DÜZELTİLDİ) ---
+    // --- 3. DETAY VE BÖLÜMLER (URL DÜZELTME HASSASİYETİ EKLENDİ) ---
     override suspend fun load(url: String): LoadResponse {
-        val animeId = url.trim()
+        // url doğrudan ID veya URL gelse bile içinden ID'yi çeker
+        val cleanId = url.substringAfterLast("/").substringBefore("?").trim()
         
-        // 1. Künye Bilgisi İsteği
-        val mainDetailUrl = "$apiUrl/anime/get?id=$animeId"
+        val mainDetailUrl = "$apiUrl/anime/get?id=$cleanId"
 
-        var title = "Anime"
+        var title = ""
         var poster: String? = null
         var bannerUrl: String? = null
         var description: String? = null
@@ -145,13 +146,13 @@ class AniziumProvider : MainAPI() {
         val episodesList = ArrayList<Episode>()
 
         try {
-            // A) Künye Bilgilerini Çekme (/anime/get)
+            // A) Künye Bilgisi
             val mainResText = app.get(mainDetailUrl, headers = apiHeaders).text
             val mainNode = mapper.readTree(mainResText)
             val dataNode = if (mainNode.has("data") && !mainNode.get("data").isNull) mainNode.get("data") else mainNode
 
-            title = dataNode.get("name_tr")?.asText() 
-                ?: dataNode.get("name")?.asText() 
+            title = dataNode.get("name")?.asText() 
+                ?: dataNode.get("name_tr")?.asText() 
                 ?: dataNode.get("title")?.asText() 
                 ?: "Anime"
 
@@ -167,13 +168,12 @@ class AniziumProvider : MainAPI() {
                 }
             }
 
-            // `series_id` çekme
+            // B) Series ID Tespiti ve Bölüm Çekme
             val targetSeriesId = dataNode.get("series_id")?.asText() 
                 ?: dataNode.get("series")?.asText() 
                 ?: dataNode.get("series")?.get("id")?.asText() 
-                ?: animeId
+                ?: cleanId
 
-            // B) Bölüm ve Sezon Bilgilerini Çekme (/anime/series?id=...)
             val seriesResText = try {
                 app.get("$apiUrl/anime/series?id=$targetSeriesId", headers = apiHeaders).text
             } catch (e: Exception) {
@@ -182,7 +182,6 @@ class AniziumProvider : MainAPI() {
 
             val seriesNode = mapper.readTree(seriesResText)
             
-            // image_1610c4.png görselindeki gibi 'data' dizisini (Array) yakalama
             val seriesDataArray = when {
                 seriesNode.has("data") && seriesNode.get("data").isArray -> seriesNode.get("data")
                 seriesNode.isArray -> seriesNode
@@ -210,7 +209,6 @@ class AniziumProvider : MainAPI() {
                             }
                         }
                     } else {
-                        // Sezon mantığı yoksa doğrudan episodes veya series dizisine bak
                         val directEpList = animeSeriesObj.get("episodes") ?: animeSeriesObj.get("series")
                         directEpList?.forEach { ep ->
                             val epId = ep.get("ID")?.asText() ?: ep.get("id")?.asText() ?: return@forEach
@@ -230,7 +228,8 @@ class AniziumProvider : MainAPI() {
             e.printStackTrace()
         }
 
-        return newAnimeLoadResponse(title, animeId, TvType.Anime) {
+        // Title ve URL eşleştirmesi güncellendi
+        return newAnimeLoadResponse(if (title.isEmpty()) "Anime" else title, "$mainUrl/anime/$cleanId", TvType.Anime) {
             this.posterUrl = poster
             this.backgroundPosterUrl = bannerUrl
             this.plot = description
