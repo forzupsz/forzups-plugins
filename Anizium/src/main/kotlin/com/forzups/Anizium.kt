@@ -601,80 +601,32 @@ class Anizium : MainAPI() {
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        var episodeId = data
-        var season = 1
-        var episode = 1
+        // data = episodeId|season|episode
+        val episodeId = data.substringBefore("|").trim()
+        if (episodeId.isBlank()) return false
 
-        val parts = data.split("|")
-
-        if (parts.isNotEmpty()) {
-            episodeId = parts[0]
-        }
-
-        if (parts.size >= 2) {
-            season = parts[1].toIntOrNull() ?: 1
-        }
-
-        if (parts.size >= 3) {
-            episode = parts[2].toIntOrNull() ?: 1
-        }
-
-        val oldSourceUrl =
-            "$apiUrl/anime/source?id=${
-                URLEncoder.encode(
-                    episodeId,
-                    "UTF-8"
-                )
-            }&plan=premium&season=$season&episode=$episode&server="
-
-        val newSourceUrl =
-            "$apiUrl/source?id=${
-                URLEncoder.encode(
-                    episodeId,
-                    "UTF-8"
-                )
-            }&site=main&plan=standart"
+        // Eski Anizium implementasyonundaki doğrulanmış endpoint.
+        val sourceUrl = "$apiUrl/anime/source?id=${URLEncoder.encode(episodeId, "UTF-8")}"
 
         var found = false
 
         try {
+            val response = app.get(
+                sourceUrl,
+                headers = apiHeaders
+            ).text
 
-            val response =
-                app.get(
-                    oldSourceUrl,
-                    headers = apiHeaders
-                ).text
+            val root = mapper.readTree(response)
+            val content = root.get("content") ?: root.get("data") ?: root
 
-            val root =
-                mapper.readTree(response)
-
-            val content =
-                root.get("content")
-                    ?: root
-
-            val subtitles =
-                content.get("subtitles")
-                    ?: root.get("subtitles")
-
+            // Subtitles
+            val subtitles = content.get("subtitles") ?: root.get("subtitles")
             if (subtitles != null && subtitles.isArray) {
-
                 subtitles.forEach { subtitle ->
-
-                    val url =
-                        text(
-                            subtitle,
-                            "link",
-                            "url"
-                        ) ?: return@forEach
-
-                    val language =
-                        text(
-                            subtitle,
-                            "name",
-                            "language",
-                            "label",
-                            "lang"
-                        ) ?: "Turkish"
+                    val url = text(subtitle, "link", "url") ?: return@forEach
+                    val language = text(
+                        subtitle, "name", "language", "label", "lang"
+                    ) ?: "Turkish"
 
                     subtitleCallback.invoke(
                         SubtitleFile(
@@ -685,54 +637,40 @@ class Anizium : MainAPI() {
                 }
             }
 
-            val groups =
-                content.get("groups")
-                    ?: root.get("groups")
+            // Video groups
+            val groups = content.get("groups") ?: root.get("groups")
 
             if (groups != null && groups.isArray) {
-
                 var serverCounter = 1
 
                 groups.forEach { group ->
+                    val groupName = text(
+                        group, "name", "title", "group"
+                    ) ?: "Server"
 
-                    val groupName =
-                        text(
-                            group,
-                            "name",
-                            "title",
-                            "group"
-                        ) ?: "Server"
-
-                    val items =
-                        group.get("items")
-
+                    val items = group.get("items")
                     if (items != null && items.isArray) {
-
                         items.forEach { item ->
+                            val rawLink = text(
+                                item,
+                                "link",
+                                "url",
+                                "sourceUrl",
+                                "source_url"
+                            ) ?: return@forEach
 
-                            val rawLink =
-                                text(
-                                    item,
-                                    "link",
-                                    "url",
-                                    "sourceUrl",
-                                    "source_url"
-                                ) ?: return@forEach
+                            val linkName = text(
+                                item,
+                                "linkName",
+                                "name",
+                                "server"
+                            ) ?: "Server $serverCounter"
 
-                            val linkName =
-                                text(
-                                    item,
-                                    "linkName",
-                                    "name",
-                                    "server"
-                                ) ?: "Server $serverCounter"
+                            val quality = int(item, "quality")
+                                ?: Qualities.Unknown.value
 
-                            val quality =
-                                int(
-                                    item,
-                                    "quality"
-                                ) ?: Qualities.Unknown.value
-
+                            // API mutlak URL döndürüyorsa aynen kullan.
+                            // Göreceli URL'yi de doğrudan fixUrl ile çöz.
                             val finalUrl =
                                 if (
                                     rawLink.startsWith("http://") ||
@@ -740,9 +678,14 @@ class Anizium : MainAPI() {
                                 ) {
                                     rawLink
                                 } else {
-                                    "$sourceUrl/$rawLink"
-                                        .replace("//", "/")
-                                        .replace("https:/", "https://")
+                                    fixUrl(rawLink)
+                                }
+
+                            val linkType =
+                                if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                                    ExtractorLinkType.M3U8
+                                } else {
+                                    ExtractorLinkType.VIDEO
                                 }
 
                             offsetCallback.invoke(
@@ -750,11 +693,7 @@ class Anizium : MainAPI() {
                                     name = "$groupName $linkName",
                                     source = this.name,
                                     url = finalUrl,
-                                    type = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
-                                        ExtractorLinkType.M3U8
-                                    } else {
-                                        ExtractorLinkType.VIDEO
-                                    }
+                                    type = linkType
                                 ) {
                                     referer = "$sourceUrl/"
                                     this.quality = quality
@@ -768,17 +707,17 @@ class Anizium : MainAPI() {
                 }
             }
 
+            // groups yoksa tek bir doğrudan source olabilir.
             if (!found) {
-
-                val directSource =
-                    text(
-                        content,
-                        "sourceUrl",
-                        "source_url"
-                    )
+                val directSource = text(
+                    content,
+                    "sourceUrl",
+                    "source_url",
+                    "link",
+                    "url"
+                )
 
                 if (!directSource.isNullOrBlank()) {
-
                     val finalUrl =
                         if (
                             directSource.startsWith("http://") ||
@@ -786,9 +725,14 @@ class Anizium : MainAPI() {
                         ) {
                             directSource
                         } else {
-                            "$sourceUrl/$directSource"
-                                .replace("//", "/")
-                                .replace("https:/", "https://")
+                            fixUrl(directSource)
+                        }
+
+                    val linkType =
+                        if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                            ExtractorLinkType.M3U8
+                        } else {
+                            ExtractorLinkType.VIDEO
                         }
 
                     offsetCallback.invoke(
@@ -796,7 +740,7 @@ class Anizium : MainAPI() {
                             name = "Anizium",
                             source = this.name,
                             url = finalUrl,
-                            type = ExtractorLinkType.VIDEO
+                            type = linkType
                         ) {
                             referer = "$sourceUrl/"
                             quality = Qualities.Unknown.value
@@ -806,131 +750,8 @@ class Anizium : MainAPI() {
                     found = true
                 }
             }
-
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-
-        if (!found) {
-
-            try {
-
-                val response =
-                    app.get(
-                        newSourceUrl,
-                        headers = apiHeaders
-                    ).text
-
-                val root =
-                    mapper.readTree(response)
-
-                val content =
-                    root.get("content")
-                        ?: root
-
-                val subtitles =
-                    content.get("subtitles")
-                        ?: root.get("subtitles")
-
-                if (subtitles != null && subtitles.isArray) {
-
-                    subtitles.forEach { subtitle ->
-
-                        val url =
-                            text(
-                                subtitle,
-                                "link",
-                                "url"
-                            ) ?: return@forEach
-
-                        val language =
-                            text(
-                                subtitle,
-                                "name",
-                                "language",
-                                "label",
-                                "lang"
-                            ) ?: "Turkish"
-
-                        subtitleCallback.invoke(
-                            SubtitleFile(
-                                lang = language,
-                                url = fixUrl(url)
-                            )
-                        )
-                    }
-                }
-
-                val groups =
-                    content.get("groups")
-                        ?: root.get("groups")
-
-                if (groups != null && groups.isArray) {
-
-                    var serverCounter = 1
-
-                    groups.forEach { group ->
-
-                        val groupName =
-                            text(
-                                group,
-                                "name",
-                                "title",
-                                "group"
-                            ) ?: "Server"
-
-                        val items =
-                            group.get("items")
-
-                        if (items != null && items.isArray) {
-
-                            items.forEach { item ->
-
-                                val rawLink =
-                                    text(
-                                        item,
-                                        "link",
-                                        "url",
-                                        "sourceUrl",
-                                        "source_url"
-                                    ) ?: return@forEach
-
-                                val quality =
-                                    int(
-                                        item,
-                                        "quality"
-                                    ) ?: Qualities.Unknown.value
-
-                                val serverName =
-                                    text(
-                                        item,
-                                        "name",
-                                        "server",
-                                        "linkName"
-                                    ) ?: "Server $serverCounter"
-
-                                offsetCallback.invoke(
-                                    newExtractorLink(
-                                        name = "$groupName $serverName",
-                                        source = this.name,
-                                        url = fixUrl(rawLink),
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        referer = "$sourceUrl/"
-                                        this.quality = quality
-                                    }
-                                )
-
-                                found = true
-                                serverCounter++
-                            }
-                        }
-                    }
-                }
-
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
         }
 
         return found
