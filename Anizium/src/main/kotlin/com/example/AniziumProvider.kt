@@ -54,12 +54,22 @@ class AniziumProvider : MainAPI() {
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    data class GenreItem(
+        @JsonProperty("ID") val id: String? = null,
+        @JsonProperty("name") val name: String? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class AnimeItem(
         @JsonProperty("ID") val id: String? = null,
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("title") val title: String? = null,
         @JsonProperty("poster") val poster: String? = null,
-        @JsonProperty("overview") val overview: String? = null
+        @JsonProperty("banner") val banner: String? = null,
+        @JsonProperty("details_banner") val detailsBanner: String? = null,
+        @JsonProperty("overview") val overview: String? = null,
+        @JsonProperty("overview_short") val overviewShort: String? = null,
+        @JsonProperty("genre") val genre: List<GenreItem>? = null
     )
 
     private fun parseAnimeList(list: List<AnimeItem>?): List<SearchResponse> {
@@ -78,7 +88,7 @@ class AniziumProvider : MainAPI() {
         val homePageList = ArrayList<HomePageList>()
 
         try {
-            // 1. Son Eklenen Bölümler (Görseldeki last-added-episodes adresi)
+            // 1. Son Eklenen Bölümler
             val lastAddedRes = app.get("$apiUrl/page/last-added-episodes?page=1", headers = apiHeaders).parsedSafe<PageApiResponse>()
             val lastAddedItems = parseAnimeList(lastAddedRes?.page?.data ?: lastAddedRes?.data)
             if (lastAddedItems.isNotEmpty()) {
@@ -94,7 +104,7 @@ class AniziumProvider : MainAPI() {
             val middleItems = parseAnimeList(homeRes?.settlementMiddle)
             if (middleItems.isNotEmpty()) homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middleItems))
 
-            // 3. Özel Kategoriler (İsekai, Dublaj, vb.)
+            // 3. Özel Kategoriler
             homeRes?.specialList?.forEach { category ->
                 val categoryName = category.name ?: return@forEach
                 val animeList = parseAnimeList(category.data)
@@ -131,7 +141,9 @@ class AniziumProvider : MainAPI() {
         
         var title = "Anime"
         var poster: String? = null
+        var bannerUrl: String? = null
         var description: String? = null
+        val genreTags = ArrayList<String>()
         val episodes = ArrayList<Episode>()
 
         try {
@@ -143,8 +155,25 @@ class AniziumProvider : MainAPI() {
             
             title = dataNode.get("name")?.asText() ?: dataNode.get("title")?.asText() ?: "Anime"
             poster = fixUrlNull(dataNode.get("poster")?.asText())
-            description = dataNode.get("overview")?.asText()
+            
+            // Arka plan kapak resmi (details_banner veya banner)
+            bannerUrl = fixUrlNull(dataNode.get("details_banner")?.asText() ?: dataNode.get("banner")?.asText())
 
+            // Konu/Açıklama (overview veya overview_short)
+            description = dataNode.get("overview")?.asText() ?: dataNode.get("overview_short")?.asText()
+
+            // Türleri (Genre) ekleme
+            val genreNode = dataNode.get("genre")
+            if (genreNode != null && genreNode.isArray) {
+                genreNode.forEach { g ->
+                    val gName = g.get("name")?.asText()
+                    if (!gName.isNullOrEmpty()) {
+                        genreTags.add(gName)
+                    }
+                }
+            }
+
+            // Bölüm Ayrıştırma (Series / Episodes / Seasons)
             val seriesNode = dataNode.get("series") ?: dataNode.get("episodes")
             if (seriesNode != null && seriesNode.isArray) {
                 seriesNode.forEach { ep ->
@@ -173,7 +202,9 @@ class AniziumProvider : MainAPI() {
 
         return newAnimeLoadResponse(title, animeId, TvType.Anime) {
             this.posterUrl = poster
+            this.backgroundPosterUrl = bannerUrl
             this.plot = description
+            this.tags = genreTags
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
