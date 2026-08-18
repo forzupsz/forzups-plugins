@@ -10,12 +10,13 @@ class Anizium : MainAPI() {
     override var mainUrl = "https://anizium.co"
     private val apiUrl = "https://api.anizium.co"
     private val siteUrl = "https://x.anizium.co"
+    private val cdnUrl = "https://f.aniziumserver.sbs"
 
     override var name = "Anizium"
     override val hasMainPage = true
     override val hasQuickSearch = true
     override var lang = "tr"
-    override val supportedTypes = setOf(TvType.Anime)
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val apiHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
@@ -116,6 +117,7 @@ class Anizium : MainAPI() {
     private fun addEpisodesFromNode(
         container: JsonNode?,
         episodes: MutableList<Episode>,
+        animeId: String,
         defaultSeason: Int = 1
     ) {
         if (container == null) return
@@ -126,7 +128,7 @@ class Anizium : MainAPI() {
                 val seasonNumber = int(seasonNode, "number", "season_number", "season") ?: defaultSeason
                 val seasonEpisodes = array(seasonNode, "episodes", "series", "data")
                 seasonEpisodes?.forEach { episode ->
-                    addSingleEpisode(episode, episodes, seasonNumber)
+                    addSingleEpisode(episode, episodes, animeId, seasonNumber)
                 }
             }
             return
@@ -134,13 +136,14 @@ class Anizium : MainAPI() {
 
         val directEpisodes = array(container, "episodes", "series", "data")
         directEpisodes?.forEach { episode ->
-            addSingleEpisode(episode, episodes, defaultSeason)
+            addSingleEpisode(episode, episodes, animeId, defaultSeason)
         }
     }
 
     private fun addSingleEpisode(
         episodeNode: JsonNode?,
         episodes: MutableList<Episode>,
+        animeId: String,
         defaultSeason: Int
     ) {
         if (episodeNode == null) return
@@ -150,10 +153,11 @@ class Anizium : MainAPI() {
         val seasonNumber = int(episodeNode, "season", "season_number") ?: defaultSeason
         val episodeName = text(episodeNode, "name", "title") ?: "Bölüm $episodeNumber"
 
-        val sourceUrl = "$apiUrl/anime/source?id=$id"
+        // Bölüm verisini CDN yolunu oluşturacak parametrelerle saklıyoruz
+        val data = "$animeId|$seasonNumber|$episodeNumber|$id"
 
         episodes.add(
-            newEpisode(sourceUrl) {
+            newEpisode(data) {
                 name = episodeName
                 season = seasonNumber
                 episode = episodeNumber
@@ -274,7 +278,7 @@ class Anizium : MainAPI() {
                 }
             }
 
-            addEpisodesFromNode(data, episodes)
+            addEpisodesFromNode(data, episodes, cleanAnimeId)
 
             if (episodes.isEmpty()) {
                 val seriesId = text(data, "series_id")
@@ -290,7 +294,7 @@ class Anizium : MainAPI() {
                     val seriesRoot = mapper.readTree(seriesResponse)
                     val seriesData = unwrap(seriesRoot) ?: seriesRoot
 
-                    addEpisodesFromNode(seriesData, episodes)
+                    addEpisodesFromNode(seriesData, episodes, cleanAnimeId)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -324,38 +328,91 @@ class Anizium : MainAPI() {
         var found = false
 
         try {
-            val targetUrl = if (data.contains("http://") || data.contains("https://")) {
-                data
-            } else {
-                "$apiUrl/anime/source?id=${URLEncoder.encode(data, "UTF-8")}"
-            }
+            // Önce Anizium API'sine istek atıp dinamik kaynakları çekmeyi deniyoruz
+            val parts = data.split("|")
+            val episodeId = if (parts.size >= 4) parts[3] else parts.last()
 
-            val response = app.get(targetUrl, headers = apiHeaders).text
-            val root = mapper.readTree(response)
-            val content = unwrap(root) ?: root
+            val sourceApiUrl = "$apiUrl/anime/source?id=${URLEncoder.encode(episodeId, "UTF-8")}"
+            try {
+                val response = app.get(sourceApiUrl, headers = apiHeaders).text
+                val root = mapper.readTree(response)
+                val content = unwrap(root) ?: root
 
-            val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
-            subtitles?.forEach { subtitle ->
-                val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
-                val language = text(subtitle, "name", "language", "label", "lang", "group") ?: "Türkçe"
+                val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
+                subtitles?.forEach { subtitle ->
+                    val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
+                    val language = text(subtitle, "name", "language", "label", "lang", "group") ?: "Türkçe"
 
-                subtitleCallback.invoke(
-                    SubtitleFile(
-                        lang = language,
-                        url = fixUrl(linkUrl)
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            lang = language,
+                            url = fixUrl(linkUrl)
+                        )
                     )
-                )
-            }
+                }
 
-            val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
-            groups?.forEach { group ->
-                val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
-                val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
+                val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
+                groups?.forEach { group ->
+                    val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
+                    val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
 
-                if (items != null) {
-                    items.forEach { item ->
+                    items?.forEach { item ->
                         val rawLink = text(item, "link", "url", "sourceUrl", "source_url", "file", "src") ?: return@forEach
                         val quality = int(item, "quality", "res") ?: Qualities.Unknown.value
-                        val finalUrl = fixUrl(rawLink)
 
-                        val linkType = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                        offsetCallback.invoke(
+                            newExtractorLink(
+                                name = groupName,
+                                source = this.name,
+                                url = fixUrl(rawLink),
+                                type = if (rawLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                referer = "$siteUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // Eğer API üzerinden link dönmediyse (403/bloklanma durumu), doğrudan AniziumCDN adreslerini kalite varyasyonlarıyla ekliyoruz
+            if (!found && parts.size >= 3) {
+                val animeId = parts[0]
+                val season = parts[1]
+                val episode = parts[2]
+
+                // Farklı çözünürlük alternatifleri
+                val qualities = listOf(
+                    Qualities.P2160.value to "2160p.original.mp4",
+                    Qualities.P1080.value to "1080p.mp4",
+                    Qualities.P720.value to "720p.mp4",
+                    Qualities.P480.value to "480p.mp4"
+                )
+
+                qualities.forEach { (qualValue, fileSuffix) ->
+                    val directCdnUrl = "$cdnUrl/$animeId/$season/$episode/$fileSuffix"
+
+                    offsetCallback.invoke(
+                        newExtractorLink(
+                            name = "Anizium Direct Server",
+                            source = this.name,
+                            url = directCdnUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            referer = "$siteUrl/"
+                            quality = qualValue
+                        }
+                    )
+                    found = true
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return found
+    }
+}
