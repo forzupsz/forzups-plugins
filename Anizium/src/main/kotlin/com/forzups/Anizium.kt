@@ -324,7 +324,6 @@ class Anizium : MainAPI() {
         var found = false
 
         try {
-            // URL içindeki id parametresi doğrulaması
             val targetUrl = if (data.contains("http://") || data.contains("https://")) {
                 data
             } else {
@@ -335,7 +334,6 @@ class Anizium : MainAPI() {
             val root = mapper.readTree(response)
             val content = unwrap(root) ?: root
 
-            // Subtitles (Altyazılar)
             val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
             subtitles?.forEach { subtitle ->
                 val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
@@ -349,7 +347,6 @@ class Anizium : MainAPI() {
                 )
             }
 
-            // Video Groups
             val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
             groups?.forEach { group ->
                 val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
@@ -362,13 +359,3 @@ class Anizium : MainAPI() {
                         val finalUrl = fixUrl(rawLink)
 
                         val linkType = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
-                            ExtractorLinkType.M3U8
-                        } else {
-                            ExtractorLinkType.VIDEO
-                        }
-
-                        offsetCallback.invoke(
-                            newExtractorLink(
-                                name = groupName,
-                                source = this.name,
-                                url = finalUrl,
