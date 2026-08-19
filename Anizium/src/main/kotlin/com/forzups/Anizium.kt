@@ -10,7 +10,6 @@ class Anizium : MainAPI() {
     override var mainUrl = "https://anizium.co"
     private val apiUrl = "https://api.anizium.co"
     private val siteUrl = "https://x.anizium.co"
-    private val cdnUrl = "https://f.aniziumserver.sbs"
 
     override var name = "Anizium"
     override val hasMainPage = true
@@ -331,80 +330,56 @@ class Anizium : MainAPI() {
             val episodeId = if (parts.size >= 4) parts[3] else parts.last()
 
             val sourceApiUrl = "$apiUrl/anime/source?id=${URLEncoder.encode(episodeId, "UTF-8")}"
-            try {
-                val response = app.get(sourceApiUrl, headers = apiHeaders).text
-                val root = mapper.readTree(response)
-                val content = unwrap(root) ?: root
+            
+            val dynamicHeaders = apiHeaders.toMutableMap()
+            dynamicHeaders["Referer"] = "$siteUrl/watch/$episodeId"
 
-                val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
-                subtitles?.forEach { subtitle ->
-                    val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
-                    val language = text(subtitle, "name", "language", "label", "lang", "group") ?: "Türkçe"
+            val response = app.get(sourceApiUrl, headers = dynamicHeaders).text
+            val root = mapper.readTree(response)
+            val content = unwrap(root) ?: root
 
-                    subtitleCallback.invoke(
-                        SubtitleFile(
-                            lang = language,
-                            url = fixUrl(linkUrl)
-                        )
+            // 1. Altyazıları Yükle (Turkish, İngilizce vb.)
+            val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
+            subtitles?.forEach { subtitle ->
+                val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
+                val language = text(subtitle, "name", "language", "label", "lang") ?: "Turkish"
+
+                subtitleCallback.invoke(
+                    SubtitleFile(
+                        lang = language,
+                        url = fixUrl(linkUrl)
                     )
-                }
-
-                val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
-                groups?.forEach { group ->
-                    val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
-                    val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
-
-                    items?.forEach { item ->
-                        val rawLink = text(item, "link", "url", "sourceUrl", "source_url", "file", "src") ?: return@forEach
-                        val quality = int(item, "quality", "res") ?: Qualities.Unknown.value
-
-                        offsetCallback.invoke(
-                            newExtractorLink(
-                                name = groupName,
-                                source = this.name,
-                                url = fixUrl(rawLink),
-                                type = if (rawLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$siteUrl/"
-                                this.quality = quality
-                            }
-                        )
-                        found = true
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
+                )
             }
 
-            if (!found && parts.size >= 3) {
-                val animeId = parts[0]
-                val season = parts[1]
-                val episode = parts[2]
+            // 2. Sunucuları Yükle ("Japonca 2160p Server 1" Yapısı)
+            val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
+            groups?.forEach { group ->
+                val langName = text(group, "name", "title", "language") ?: "Japonca"
+                val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
 
-                val qualities = listOf(
-                    Qualities.P2160.value to "2160p.original.mp4",
-                    Qualities.P1080.value to "1080p.mp4",
-                    Qualities.P720.value to "720p.mp4",
-                    Qualities.P480.value to "480p.mp4"
-                )
+                items?.forEachIndexed { index, item ->
+                    val rawLink = text(item, "link", "url", "sourceUrl", "file", "src") ?: return@forEach
+                    val qualityStr = text(item, "quality", "res", "name") ?: ""
+                    val qualityVal = int(item, "quality", "res") ?: Qualities.Unknown.value
 
-                qualities.forEach { (qualValue, fileSuffix) ->
-                    val directCdnUrl = "$cdnUrl/$animeId/$season/$episode/$fileSuffix"
+                    val serverName = "$langName $qualityStr Server ${index + 1}".trim()
 
                     offsetCallback.invoke(
                         newExtractorLink(
-                            name = "Anizium Direct Server",
+                            name = serverName,
                             source = this.name,
-                            url = directCdnUrl,
-                            type = ExtractorLinkType.VIDEO
+                            url = fixUrl(rawLink),
+                            type = if (rawLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         ) {
                             this.referer = "$siteUrl/"
-                            this.quality = qualValue
+                            this.quality = qualityVal
                         }
                     )
                     found = true
                 }
             }
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
