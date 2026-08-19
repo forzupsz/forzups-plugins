@@ -2,62 +2,227 @@ package com.forzups
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Document
+import com.fasterxml.jackson.databind.JsonNode
+import java.net.URLEncoder
 
 class Anizium : MainAPI() {
+
     override var mainUrl = "https://anizium.co"
+    private val apiUrl = "https://api.anizium.co"
+    private val siteUrl = "https://x.anizium.co"
+    private val cdnUrl = "https://f.aniziumserver.sbs"
 
     override var name = "Anizium"
     override val hasMainPage = true
+    override val hasQuickSearch = true
     override var lang = "tr"
-    override val supportedTypes = setOf(TvType.Anime)
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
-    private val defaultHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer" to "$mainUrl/",
-        "Origin" to mainUrl,
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+    private val apiHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "Accept" to "application/json, text/plain, */*",
+        "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Content-Type" to "application/json",
+        "Origin" to siteUrl,
+        "Referer" to "$siteUrl/",
+        "cf-control" to "134e4c040840015655080906544d030f004b4c075b54500f",
+        "site" to "main",
+        "device" to "browser",
+        "language" to "tr",
+        "user-profile" to "null",
+        "user-session" to "01570d01545f55510102040f525d390e00094f0556514e2d1d5201580100071e030350115a53534c05550f535143455c085c54101215",
+        "sec-ch-ua" to """"Not;A=Brand";v="99", "Chromium";v="139"""",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to """"Windows""""
     )
 
-    private fun extractAnimeList(doc: Document): List<SearchResponse> {
-        val items = ArrayList<SearchResponse>()
-        
-        doc.select("a[href*=/anime/], a[href*=/izle/], div.anime-card, div.poster-card, div.card, article, div[class*=card]").forEach { element ->
-            val linkNode = if (element.tagName() == "a") element else element.selectFirst("a[href]")
-            val href = linkNode?.attr("href") ?: return@forEach
-
-            if (href == "/anime" || href == "/animeler" || href.endsWith("/anime/")) return@forEach
-
-            val title = element.selectFirst("h1, h2, h3, h4, .title, .name, [class*=title]")?.text()?.trim()
-                ?: linkNode.attr("title").ifEmpty { null }
-                ?: element.selectFirst("img")?.attr("alt")?.trim()
-                ?: return@forEach
-
-            if (title.length < 2) return@forEach
-
-            val imgNode = element.selectFirst("img")
-            val poster = imgNode?.attr("src")?.ifEmpty { null }
-                ?: imgNode?.attr("data-src")?.ifEmpty { null }
-                ?: imgNode?.attr("srcset")?.substringBefore(" ")
-
-            items.add(newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
-                this.posterUrl = fixUrlNull(poster)
-            })
+    private fun text(node: JsonNode?, vararg keys: String): String? {
+        if (node == null) return null
+        for (key in keys) {
+            val value = node.get(key)
+            if (value != null && !value.isNull) {
+                val result = value.asText()
+                if (result.isNotBlank() && result != "null") {
+                    return result
+                }
+            }
         }
-
-        return items.distinctBy { it.url }
+        return null
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    private fun int(node: JsonNode?, vararg keys: String): Int? {
+        if (node == null) return null
+        for (key in keys) {
+            val value = node.get(key)
+            if (value != null && !value.isNull) {
+                if (value.isInt || value.isLong || value.isNumber) {
+                    return value.asInt()
+                }
+                value.asText().toIntOrNull()?.let {
+                    return it
+                }
+            }
+        }
+        return null
+    }
+
+    private fun array(node: JsonNode?, vararg keys: String): JsonNode? {
+        if (node == null) return null
+        for (key in keys) {
+            val value = node.get(key)
+            if (value != null && value.isArray) {
+                return value
+            }
+        }
+        return null
+    }
+
+    private fun unwrap(node: JsonNode?): JsonNode? {
+        if (node == null) return null
+        return if (node.has("data") && !node.get("data").isNull) {
+            node.get("data")
+        } else {
+            node
+        }
+    }
+
+    private fun parseAnimeList(list: JsonNode?): List<SearchResponse> {
+        if (list == null || !list.isArray) {
+            return emptyList()
+        }
+
+        return list.mapNotNull { anime ->
+            val name = text(anime, "name_tr", "name", "title") ?: return@mapNotNull null
+            val id = text(anime, "ID", "id", "series_id", "slug") ?: return@mapNotNull null
+
+            newAnimeSearchResponse(name, id, TvType.Anime) {
+                posterUrl = fixUrlNull(text(anime, "poster", "poster_url", "mobile_poster_link"))
+            }
+        }
+    }
+
+    private fun extractPageList(node: JsonNode?): JsonNode? {
+        if (node == null) return null
+        if (node.isArray) return node
+
+        val page = node.get("page")
+        if (page != null) {
+            if (page.isArray) return page
+            array(page, "data", "items", "episodes")?.let { return it }
+        }
+
+        return array(node, "data", "items", "results")
+    }
+
+    private fun addEpisodesFromNode(
+        container: JsonNode?,
+        episodes: MutableList<Episode>,
+        animeId: String,
+        defaultSeason: Int = 1
+    ) {
+        if (container == null) return
+
+        val seasons = array(container, "seasons")
+        if (seasons != null) {
+            seasons.forEach { seasonNode ->
+                val seasonNumber = int(seasonNode, "number", "season_number", "season") ?: defaultSeason
+                val seasonEpisodes = array(seasonNode, "episodes", "series", "data")
+                seasonEpisodes?.forEach { episode ->
+                    addSingleEpisode(episode, episodes, animeId, seasonNumber)
+                }
+            }
+            return
+        }
+
+        val directEpisodes = array(container, "episodes", "series", "data")
+        directEpisodes?.forEach { episode ->
+            addSingleEpisode(episode, episodes, animeId, defaultSeason)
+        }
+    }
+
+    private fun addSingleEpisode(
+        episodeNode: JsonNode?,
+        episodes: MutableList<Episode>,
+        animeId: String,
+        defaultSeason: Int
+    ) {
+        if (episodeNode == null) return
+
+        val id = text(episodeNode, "id", "ID", "episode_id") ?: return
+        val episodeNumber = int(episodeNode, "number", "episode_number", "episode") ?: 1
+        val seasonNumber = int(episodeNode, "season", "season_number") ?: defaultSeason
+        val episodeName = text(episodeNode, "name", "title") ?: "Bölüm $episodeNumber"
+
+        val data = "$animeId|$seasonNumber|$episodeNumber|$id"
+
+        episodes.add(
+            newEpisode(data) {
+                name = episodeName
+                season = seasonNumber
+                episode = episodeNumber
+            }
+        )
+    }
+
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+
         val homePageList = ArrayList<HomePageList>()
+
         try {
-            val doc = app.get(mainUrl, headers = defaultHeaders).document
-            val latestItems = extractAnimeList(doc)
+            val latestText = app.get(
+                "$apiUrl/page/last-added-episodes?page=1",
+                headers = apiHeaders
+            ).text
+
+            val latestNode = mapper.readTree(latestText)
+            val latestList = extractPageList(latestNode)
+            val latestItems = parseAnimeList(latestList)
 
             if (latestItems.isNotEmpty()) {
-                homePageList.add(HomePageList("Son Eklenenler", latestItems))
+                homePageList.add(HomePageList("Son Eklenen Bölümler", latestItems))
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val homeText = app.get(
+                "$apiUrl/page/home",
+                headers = apiHeaders
+            ).text
+
+            val home = mapper.readTree(homeText)
+            val homeData = unwrap(home) ?: home
+
+            val top = parseAnimeList(homeData.get("settlement_top"))
+            if (top.isNotEmpty()) {
+                homePageList.add(HomePageList("Öne Çıkan Animeler", top))
+            }
+
+            val middle = parseAnimeList(homeData.get("settlement_middle"))
+            if (middle.isNotEmpty()) {
+                homePageList.add(HomePageList("Haftanın En Çok İzlenenleri", middle))
+            }
+
+            val special = homeData.get("special_list")
+            if (special != null && special.isArray) {
+                special.forEach { category ->
+                    val categoryName = text(category, "name") ?: return@forEach
+                    val categoryData = parseAnimeList(category.get("data"))
+                    if (categoryData.isNotEmpty()) {
+                        homePageList.add(HomePageList(categoryName, categoryData))
+                    }
+                }
+            }
+
+            val lower = parseAnimeList(homeData.get("settlement_lower"))
+            if (lower.isNotEmpty()) {
+                homePageList.add(HomePageList("Önerilen Animeler", lower))
+            }
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -67,46 +232,88 @@ class Anizium : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
-            val doc = app.get("$mainUrl/ara?q=${query.trim().replace(" ", "+")}", headers = defaultHeaders).document
-            extractAnimeList(doc)
+            val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+            val searchUrl = "$apiUrl/page/search?value=$encodedQuery&page=1"
+            val response = app.get(searchUrl, headers = apiHeaders).text
+            val node = mapper.readTree(response)
+            val list = extractPageList(node)
+            parseAnimeList(list)
         } catch (e: Exception) {
+            e.printStackTrace()
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = defaultHeaders).document
+        val rawAnimeId = url.substringAfterLast("/").substringBefore("?").trim()
+        val cleanAnimeId = rawAnimeId.ifBlank { url.trim() }
 
-        val title = doc.selectFirst("h1, .title, [class*=title]")?.text()?.trim() ?: "Anime"
-        val poster = doc.selectFirst("img[src*=tmdb.org], img[src*=/poster/], .poster img, img")?.attr("src")
-        val description = doc.selectFirst(".description, .overview, .synopsis, p")?.text()?.trim()
-        val genres = doc.select("a[href*=/tur/], a[href*=/genre/], .genre").map { it.text().trim() }
+        var title = "Anime"
+        var poster: String? = null
+        var banner: String? = null
+        var description: String? = null
 
-        val episodesList = ArrayList<Episode>()
-        val epElements = doc.select("a[href*=/bolum], a[href*=/izle/], a[href*=-bolum-], .episode-item, .episodes a")
+        val tags = ArrayList<String>()
+        val episodes = ArrayList<Episode>()
 
-        if (epElements.isNotEmpty()) {
-            epElements.forEachIndexed { index, ep ->
-                val epHref = ep.attr("href")
-                val epTitle = ep.text().trim().ifEmpty { "${index + 1}. Bölüm" }
+        try {
+            val detailUrl = "$apiUrl/anime/get?id=$cleanAnimeId"
+            val response = app.get(detailUrl, headers = apiHeaders).text
+            val root = mapper.readTree(response)
+            val data = unwrap(root) ?: root
 
-                episodesList.add(newEpisode(fixUrl(epHref)) {
-                    this.name = epTitle
-                    this.episode = index + 1
-                })
+            title = text(data, "name_tr", "name", "title") ?: "Anime"
+            poster = fixUrlNull(text(data, "poster", "mobile_poster_link", "poster_url"))
+            banner = fixUrlNull(text(data, "details_banner", "banner_link", "banner", "background"))
+            description = text(data, "overview", "description", "overview_short")
+
+            val genreNode = data.get("genre") ?: data.get("genres")
+            if (genreNode != null && genreNode.isArray) {
+                genreNode.forEach { genre ->
+                    val genreName = text(genre, "name", "title")
+                    if (!genreName.isNullOrBlank()) {
+                        tags.add(genreName)
+                    }
+                }
             }
-        } else {
-            episodesList.add(newEpisode(url) {
-                this.name = "1. Bölüm"
-                this.episode = 1
-            })
+
+            addEpisodesFromNode(data, episodes, cleanAnimeId)
+
+            if (episodes.isEmpty()) {
+                val seriesId = text(data, "series_id")
+                    ?: data.get("series")?.let {
+                        if (it.isObject) text(it, "id", "ID") else it.asText()
+                    }
+                    ?: text(data, "ID", "id")
+                    ?: cleanAnimeId
+
+                try {
+                    val seriesUrl = "$apiUrl/anime/series?id=$seriesId"
+                    val seriesResponse = app.get(seriesUrl, headers = apiHeaders).text
+                    val seriesRoot = mapper.readTree(seriesResponse)
+                    val seriesData = unwrap(seriesRoot) ?: seriesRoot
+
+                    addEpisodesFromNode(seriesData, episodes, cleanAnimeId)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
-            this.posterUrl = fixUrlNull(poster)
-            this.plot = description
-            this.tags = genres
-            addEpisodes(DubStatus.Subbed, episodesList)
+        return newAnimeLoadResponse(
+            title,
+            "$mainUrl/anime/$cleanAnimeId",
+            TvType.Anime
+        ) {
+            posterUrl = poster
+            backgroundPosterUrl = banner
+            plot = description
+            this.tags = tags
+
+            addEpisodes(DubStatus.Subbed, episodes)
         }
     }
 
@@ -116,55 +323,92 @@ class Anizium : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         offsetCallback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val doc = app.get(data, headers = defaultHeaders).document
-            var found = false
+        if (data.isBlank()) return false
+        var found = false
 
-            val pageHtml = doc.html()
-            val serverDomains = listOf("f.aniziumserver.sbs", "r.aniziumserver.sbs", "x.aniziumserver.site", "a.aniziumserver.site")
+        try {
+            val parts = data.split("|")
+            val episodeId = if (parts.size >= 4) parts[3] else parts.last()
 
-            doc.select("iframe, video, source").forEach { element ->
-                val src = element.attr("src").ifEmpty { element.attr("data-src") }
-                if (src.isNotEmpty()) {
-                    loadExtractor(fixUrl(src), subtitleCallback, offsetCallback)
+            val sourceApiUrl = "$apiUrl/anime/source?id=${URLEncoder.encode(episodeId, "UTF-8")}"
+            try {
+                val response = app.get(sourceApiUrl, headers = apiHeaders).text
+                val root = mapper.readTree(response)
+                val content = unwrap(root) ?: root
+
+                val subtitles = array(content, "subtitles") ?: array(root, "subtitles")
+                subtitles?.forEach { subtitle ->
+                    val linkUrl = text(subtitle, "link", "url", "file") ?: return@forEach
+                    val language = text(subtitle, "name", "language", "label", "lang", "group") ?: "Türkçe"
+
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            lang = language,
+                            url = fixUrl(linkUrl)
+                        )
+                    )
+                }
+
+                val groups = array(content, "groups") ?: array(root, "groups") ?: array(content, "sources")
+                groups?.forEach { group ->
+                    val groupName = text(group, "name", "title", "group", "platform", "server") ?: "Sunucu"
+                    val items = array(group, "items") ?: array(group, "links") ?: array(group, "sources")
+
+                    items?.forEach { item ->
+                        val rawLink = text(item, "link", "url", "sourceUrl", "source_url", "file", "src") ?: return@forEach
+                        val quality = int(item, "quality", "res") ?: Qualities.Unknown.value
+
+                        offsetCallback.invoke(
+                            newExtractorLink(
+                                name = groupName,
+                                source = this.name,
+                                url = fixUrl(rawLink),
+                                type = if (rawLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "$siteUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            if (!found && parts.size >= 3) {
+                val animeId = parts[0]
+                val season = parts[1]
+                val episode = parts[2]
+
+                val qualities = listOf(
+                    Qualities.P2160.value to "2160p.original.mp4",
+                    Qualities.P1080.value to "1080p.mp4",
+                    Qualities.P720.value to "720p.mp4",
+                    Qualities.P480.value to "480p.mp4"
+                )
+
+                qualities.forEach { (qualValue, fileSuffix) ->
+                    val directCdnUrl = "$cdnUrl/$animeId/$season/$episode/$fileSuffix"
+
+                    offsetCallback.invoke(
+                        newExtractorLink(
+                            name = "Anizium Direct Server",
+                            source = this.name,
+                            url = directCdnUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$siteUrl/"
+                            this.quality = qualValue
+                        }
+                    )
                     found = true
                 }
             }
-
-            serverDomains.forEach { domain ->
-                if (pageHtml.contains(domain)) {
-                    val regex = """https://$domain/([0-9a-zA-Z/_.-]+)""".toRegex()
-                    regex.findAll(pageHtml).forEach { match ->
-                        val matchedUrl = match.value
-                        val baseUrl = matchedUrl.substringBeforeLast("/")
-
-                        listOf(
-                            "2160p.original.mp4" to Qualities.P2160.value,
-                            "1080p.original.mp4" to Qualities.P1080.value,
-                            "1080p.mp4" to Qualities.P1080.value,
-                            "720p.mp4" to Qualities.P720.value
-                        ).forEach { (fileName, qualityVal) ->
-                            offsetCallback.invoke(
-                                newExtractorLink(
-                                    source = "Anizium Server ($domain)",
-                                    name = "Anizium",
-                                    url = "$baseUrl/$fileName",
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.quality = qualityVal
-                                    this.referer = "$mainUrl/"
-                                }
-                            )
-                            found = true
-                        }
-                    }
-                }
-            }
-
-            found
         } catch (e: Exception) {
             e.printStackTrace()
-            false
         }
+
+        return found
     }
 }
