@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
-class AniziumProvider : MainAPI() {
+class Anizium : MainAPI() {
     override var mainUrl = "https://anizium.co"
     private val apiUrl = "https://api.anizium.co"
 
