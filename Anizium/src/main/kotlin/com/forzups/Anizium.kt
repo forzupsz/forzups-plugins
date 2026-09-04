@@ -323,13 +323,6 @@ class Anizium : MainAPI() {
                 "title"
             ) ?: "Bölüm $episodeNumber"
 
-        /*
-         * Format:
-         *
-         * animeId | season | episode | episodeId
-         *
-         * loadLinks() tarafında tekrar ayırıyoruz.
-         */
         val data =
             "$animeId|$seasonNumber|$episodeNumber|$id"
 
@@ -734,46 +727,25 @@ class Anizium : MainAPI() {
 
         try {
 
-            /*
-             * Episode data:
-             *
-             * animeId|season|episode|episodeId
-             */
-
-            val parts =
-                data.split("|")
+            val parts = data.split("|")
 
             if (parts.size < 4) {
                 return false
             }
 
-            val animeId =
-                parts[0]
+            val animeId = parts[0]
 
             val season =
-                parts[1].toIntOrNull()
-                    ?: 1
+                parts[1].toIntOrNull() ?: 1
 
             val episode =
-                parts[2].toIntOrNull()
-                    ?: 1
+                parts[2].toIntOrNull() ?: 1
 
-            val episodeId =
-                parts[3]
+            val episodeId = parts[3]
 
-            /*
-             * YENİ ANİZİUM SOURCE API
-             *
-             * Örnek:
-             *
-             * https://api.anizium.co/anime/source
-             * ?id=791674752
-             * &site=main
-             * &plan=standart
-             * &season=1
-             * &episode=1
-             * &server=2
-             */
+            // =========================
+            // SOURCE API
+            // =========================
 
             val sourceApiUrl =
                 "$apiUrl/anime/source" +
@@ -802,21 +774,9 @@ class Anizium : MainAPI() {
             val content =
                 unwrap(root) ?: root
 
-            /*
-             * =====================================================
-             * ALTYAZILAR
-             * =====================================================
-             *
-             * API:
-             *
-             * "subtitles": [
-             *   {
-             *     "group": "tr",
-             *     "name": "Türkçe",
-             *     "link": "...file.vtt"
-             *   }
-             * ]
-             */
+            // =========================
+            // SUBTITLES
+            // =========================
 
             val subtitles =
                 array(
@@ -853,7 +813,7 @@ class Anizium : MainAPI() {
                         "lang"
                     ) ?: "Türkçe"
 
-                subtitleCallback.invoke(
+                subtitleCallback(
                     SubtitleFile(
                         lang = language,
                         url = fixUrl(subtitleUrl)
@@ -863,30 +823,9 @@ class Anizium : MainAPI() {
                 found = true
             }
 
-            /*
-             * =====================================================
-             * VIDEO GRUPLARI
-             * =====================================================
-             *
-             * Örnek:
-             *
-             * groups:
-             * [
-             *   {
-             *     "group": "trdub",
-             *     "name": "Türkçe",
-             *     "type": "hls",
-             *     "items": [...]
-             *   },
-             *
-             *   {
-             *     "group": "original",
-             *     "name": "Japonca",
-             *     "type": "hls",
-             *     "items": [...]
-             *   }
-             * ]
-             */
+            // =========================
+            // VIDEO GROUPS
+            // =========================
 
             val groups =
                 array(
@@ -947,6 +886,22 @@ class Anizium : MainAPI() {
 
                 items?.forEach { item ->
 
+                    /*
+                     * ÖNEMLİ:
+                     *
+                     * API'nin verdiği URL'yi
+                     * DEĞİŞTİRMİYORUZ.
+                     *
+                     * Böylece:
+                     *
+                     * r.aniziumserver.sbs
+                     * f.aniziumserver.sbs
+                     * r.aniziumserver.site
+                     * f.aniziumserver.site
+                     *
+                     * hangisi gelirse o kullanılır.
+                     */
+
                     val rawLink =
                         text(
                             item,
@@ -964,7 +919,7 @@ class Anizium : MainAPI() {
                     }
 
                     val cleanLink =
-                        fixUrl(rawLink)
+                        rawLink.trim()
 
                     val quality =
                         int(
@@ -984,14 +939,6 @@ class Anizium : MainAPI() {
                             "Kalite Bilinmiyor"
                         }
 
-                    /*
-                     * CloudStream'de kaynaklar şöyle görünecek:
-                     *
-                     * Japonca - 1080p
-                     * Türkçe Dublaj - 1080p
-                     * İngilizce Dublaj - 720p
-                     */
-
                     val sourceName =
                         "$groupName - $qualityText"
 
@@ -1007,7 +954,7 @@ class Anizium : MainAPI() {
                             ExtractorLinkType.VIDEO
                         }
 
-                    offsetCallback.invoke(
+                    offsetCallback(
                         newExtractorLink(
                             name = sourceName,
                             source = this.name,
@@ -1015,8 +962,15 @@ class Anizium : MainAPI() {
                             type = linkType
                         ) {
 
-                            this.referer =
-                                "$siteUrl/"
+                            /*
+                             * Video URL'sinin hostunu değiştirmiyoruz.
+                             *
+                             * Referer olarak Anizium'un
+                             * izleme sayfasını kullanıyoruz.
+                             */
+
+                            referer =
+                                "$siteUrl/watch/$episodeId?season=$season&episode=$episode"
 
                             this.quality =
                                 quality
