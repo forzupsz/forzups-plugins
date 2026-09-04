@@ -48,9 +48,11 @@ class Anizium : MainAPI() {
         if (node == null) return null
 
         for (key in keys) {
+
             val value = node.get(key)
 
             if (value != null && !value.isNull) {
+
                 val result = value.asText()
 
                 if (
@@ -323,6 +325,32 @@ class Anizium : MainAPI() {
                 "title"
             ) ?: "Bölüm $episodeNumber"
 
+        /*
+         * Bölüm görseli için API'de bulunabilecek
+         * olası alanların tamamını deniyoruz.
+         */
+        val episodePoster =
+            fixUrlNull(
+                text(
+                    episodeNode,
+                    "poster",
+                    "poster_url",
+                    "thumbnail",
+                    "thumbnail_url",
+                    "image",
+                    "image_url",
+                    "thumb",
+                    "thumb_url",
+                    "still",
+                    "still_url",
+                    "mobile_poster_link",
+                    "episode_poster",
+                    "episode_poster_url",
+                    "cover",
+                    "cover_url"
+                )
+            )
+
         val data =
             "$animeId|$seasonNumber|$episodeNumber|$id"
 
@@ -332,6 +360,11 @@ class Anizium : MainAPI() {
                 name = episodeName
                 season = seasonNumber
                 episode = episodeNumber
+
+                /*
+                 * Kraptor Plus tarzı bölüm görseli.
+                 */
+                posterUrl = episodePoster
             }
         )
     }
@@ -727,13 +760,15 @@ class Anizium : MainAPI() {
 
         try {
 
-            val parts = data.split("|")
+            val parts =
+                data.split("|")
 
             if (parts.size < 4) {
                 return false
             }
 
-            val animeId = parts[0]
+            val animeId =
+                parts[0]
 
             val season =
                 parts[1].toIntOrNull() ?: 1
@@ -741,7 +776,8 @@ class Anizium : MainAPI() {
             val episode =
                 parts[2].toIntOrNull() ?: 1
 
-            val episodeId = parts[3]
+            val episodeId =
+                parts[3]
 
             // =========================
             // SOURCE API
@@ -759,8 +795,11 @@ class Anizium : MainAPI() {
             val dynamicHeaders =
                 apiHeaders.toMutableMap()
 
-            dynamicHeaders["Referer"] =
+            val videoReferer =
                 "$siteUrl/watch/$episodeId?season=$season&episode=$episode"
+
+            dynamicHeaders["Referer"] =
+                videoReferer
 
             val response =
                 app.get(
@@ -795,7 +834,8 @@ class Anizium : MainAPI() {
                         subtitle,
                         "link",
                         "url",
-                        "file"
+                        "file",
+                        "src"
                     )
 
                 if (
@@ -887,19 +927,14 @@ class Anizium : MainAPI() {
                 items?.forEach { item ->
 
                     /*
-                     * ÖNEMLİ:
+                     * API hangi server URL'sini veriyorsa
+                     * onu aynen kullanıyoruz.
                      *
-                     * API'nin verdiği URL'yi
-                     * DEĞİŞTİRMİYORUZ.
+                     * f.aniziumserver...
+                     * r.aniziumserver...
+                     * k.aniziumserver...
                      *
-                     * Böylece:
-                     *
-                     * r.aniziumserver.sbs
-                     * f.aniziumserver.sbs
-                     * r.aniziumserver.site
-                     * f.aniziumserver.site
-                     *
-                     * hangisi gelirse o kullanılır.
+                     * hiçbirini değiştirmiyoruz.
                      */
 
                     val rawLink =
@@ -925,7 +960,8 @@ class Anizium : MainAPI() {
                         int(
                             item,
                             "quality",
-                            "res"
+                            "res",
+                            "resolution"
                         )
                             ?: Qualities.Unknown.value
 
@@ -954,6 +990,25 @@ class Anizium : MainAPI() {
                             ExtractorLinkType.VIDEO
                         }
 
+                    // =========================
+                    // VIDEO HEADERS
+                    // =========================
+
+                    val videoHeaders =
+                        mapOf(
+                            "User-Agent" to
+                                apiHeaders["User-Agent"].orEmpty(),
+
+                            "Referer" to
+                                videoReferer,
+
+                            "Origin" to
+                                siteUrl,
+
+                            "Accept" to
+                                "*/*"
+                        )
+
                     offsetCallback(
                         newExtractorLink(
                             name = sourceName,
@@ -962,15 +1017,11 @@ class Anizium : MainAPI() {
                             type = linkType
                         ) {
 
-                            /*
-                             * Video URL'sinin hostunu değiştirmiyoruz.
-                             *
-                             * Referer olarak Anizium'un
-                             * izleme sayfasını kullanıyoruz.
-                             */
-
                             referer =
-                                "$siteUrl/watch/$episodeId?season=$season&episode=$episode"
+                                videoReferer
+
+                            headers =
+                                videoHeaders
 
                             this.quality =
                                 quality
